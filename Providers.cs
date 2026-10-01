@@ -197,6 +197,12 @@ static class SettingsWindow
         Add(readAloud);
         Add(Hint("Uses Windows' own voices. Change the voice in Windows Settings → Time & Language → Speech."));
 
+        Add(Heading("Updates"));
+        grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
+        var updates = new CheckBox { Text = "Check for updates once a day", AutoSize = true, Checked = Updater.Enabled };
+        Add(updates);
+        Add(Hint($"You have Otto {Updater.Current}. New versions show as a small bar in the panel; nothing installs without your click."));
+
         var buttons = new FlowLayoutPanel { AutoSize = false, FlowDirection = FlowDirection.RightToLeft, Size = new Size(W, 40), Margin = new Padding(0, 22, 0, 4) };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
@@ -251,6 +257,7 @@ static class SettingsWindow
         Providers.Set(chosen, "smart", smart.Text.Trim().Length > 0 ? smart.Text.Trim() : fast.Text.Trim());
         Providers.Set(chosen, "vision", vision.Checked ? "1" : "0");
         Prefs.AnimateReplies = animate.Checked;
+        Updater.Enabled = updates.Checked;
         Prefs.ReadAloud = readAloud.Checked;
         Prefs.VoiceAutoSend = autoSend.Checked;
     }

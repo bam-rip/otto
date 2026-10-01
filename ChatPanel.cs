@@ -26,6 +26,7 @@ sealed class ChatPanel : Form
     readonly System.Windows.Forms.Timer anim = new() { Interval = 15 };
     readonly Font titleFont = new("Segoe UI Light", 18f);
     readonly Font smallFont = new("Segoe UI", 8.5f);
+    readonly Font smallBoldFont = new("Segoe UI", 8.5f, FontStyle.Bold);
     readonly Font glyphFont = new(GlyphFont, 11f);
     string? lastSent;
 
@@ -47,6 +48,13 @@ sealed class ChatPanel : Form
     // attachments waiting to go with the next message (dropped files, pasted images)
     readonly List<Attachment> attachments = new();
     Rectangle rAttach, rPin, rHistory;
+
+    // "Otto 1.1.0 is out   Update   What's new   ×" under the header, only while an update is waiting
+    string? updateText;
+    Rectangle rUpdateBar, rUpdateGo, rUpdateNotes, rUpdateClose;
+    public event Action? UpdateClicked, UpdateNotesClicked, UpdateDismissed;
+
+    public void SetUpdate(string? text) => Ui(() => { updateText = text; Relayout(); });
     const string GlyphPin = "\uE718", GlyphPinned = "\uE840", GlyphHistory = "\uE81C", GlyphAttach = "\uE723";
 
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -148,6 +156,15 @@ sealed class ChatPanel : Form
 
         rAttach = attachments.Count > 0 ? new Rectangle(g, rBox.Top - D(30), w - 2 * g, D(24)) : Rectangle.Empty;
         int chatTop = D(80);
+        if (updateText != null)
+        {
+            rUpdateBar = new Rectangle(g, D(84), w - 2 * g, D(30));
+            rUpdateClose = new Rectangle(rUpdateBar.Right - D(30), rUpdateBar.Y, D(30), rUpdateBar.Height);
+            rUpdateNotes = new Rectangle(rUpdateClose.Left - D(86), rUpdateBar.Y, D(86), rUpdateBar.Height);
+            rUpdateGo = new Rectangle(rUpdateNotes.Left - D(70), rUpdateBar.Y, D(70), rUpdateBar.Height);
+            chatTop = rUpdateBar.Bottom + D(6);
+        }
+        else rUpdateBar = rUpdateGo = rUpdateNotes = rUpdateClose = Rectangle.Empty;
         int chatBottom = (attachments.Count > 0 ? rAttach.Top : rBox.Top) - D(12);
         chat.SetBounds(0, chatTop, w, chatBottom - chatTop);
         Invalidate();
@@ -215,6 +232,26 @@ sealed class ChatPanel : Form
         DrawGlyph(g, GlyphHistory, rHistory, Fg);
         DrawGlyph(g, Pinned ? GlyphPinned : GlyphPin, rPin, Pinned ? Accent : Fg);
         DrawGlyph(g, "", rNew, Fg);
+
+        if (updateText != null)
+        {
+            using (var bb = new SolidBrush(Color.FromArgb(40, Accent))) g.FillRectangle(bb, rUpdateBar);
+            using (var strip = new SolidBrush(Accent)) g.FillRectangle(strip, rUpdateBar.X, rUpdateBar.Y, D(3), rUpdateBar.Height);
+            const TextFormatFlags mid = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding;
+            TextRenderer.DrawText(g, updateText, smallFont, new Rectangle(rUpdateBar.X + D(12), rUpdateBar.Y, rUpdateGo.Left - rUpdateBar.X - D(12), rUpdateBar.Height),
+                Fg, mid | TextFormatFlags.EndEllipsis);
+            void Link(Rectangle r, string s, bool strong)
+            {
+                bool hot = r.Contains(mouse);
+                if (hot) using (var hb = new SolidBrush(Color.FromArgb(30, 255, 255, 255))) g.FillRectangle(hb, r);
+                TextRenderer.DrawText(g, s, strong ? smallBoldFont : smallFont, r, hot || strong ? Fg : Dim,
+                    mid | TextFormatFlags.HorizontalCenter);
+            }
+            Link(rUpdateGo, "Update", true);
+            Link(rUpdateNotes, "What's new", false);
+            TextRenderer.DrawText(g, "\uE711", glyphFont, rUpdateClose, rUpdateClose.Contains(mouse) ? Fg : Dim,
+                mid | TextFormatFlags.HorizontalCenter);
+        }
 
         if (attachments.Count > 0)
         {
@@ -306,7 +343,7 @@ sealed class ChatPanel : Form
     protected override void OnMouseMove(MouseEventArgs e)
     {
         mouse = e.Location;
-        bool overButton = rHistory.Contains(mouse) || rPin.Contains(mouse) || rAttach.Contains(mouse) || rNew.Contains(mouse) || rKey.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
+        bool overButton = rUpdateGo.Contains(mouse) || rUpdateNotes.Contains(mouse) || rUpdateClose.Contains(mouse) || rHistory.Contains(mouse) || rPin.Contains(mouse) || rAttach.Contains(mouse) || rNew.Contains(mouse) || rKey.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
         Cursor = overButton ? Cursors.Hand : rBox.Contains(mouse) ? Cursors.IBeam : Cursors.Default;
         Invalidate();
     }
@@ -316,7 +353,10 @@ sealed class ChatPanel : Form
     protected override void OnMouseUp(MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
-        if (rHistory.Contains(e.Location)) HistoryRequested?.Invoke();
+        if (rUpdateGo.Contains(e.Location)) UpdateClicked?.Invoke();
+        else if (rUpdateNotes.Contains(e.Location)) UpdateNotesClicked?.Invoke();
+        else if (rUpdateClose.Contains(e.Location)) UpdateDismissed?.Invoke();
+        else if (rHistory.Contains(e.Location)) HistoryRequested?.Invoke();
         else if (rPin.Contains(e.Location)) { Pinned = !Pinned; Invalidate(); }
         else if (rAttach.Contains(e.Location)) { attachments.Clear(); Relayout(); }
         else if (rNew.Contains(e.Location)) ClearRequested?.Invoke();

@@ -5,6 +5,12 @@ namespace Otto;
 
 static class Program
 {
+    static bool WaitForMutex(Mutex m)
+    {
+        try { return m.WaitOne(TimeSpan.FromSeconds(15)); }
+        catch (AbandonedMutexException) { return true; } // the old copy exited without releasing it: ours now
+    }
+
     [STAThread]
     static void Main()
     {
@@ -107,6 +113,20 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-transcript.txt"), outp);
             return;
         }
+        // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
+        if (Environment.GetCommandLineArgs().Contains("--update-test"))
+        {
+            string log;
+            try
+            {
+                var r = Updater.CheckNowAsync().GetAwaiter().GetResult();
+                if (r == null) log = $"no newer release than {Updater.Current}";
+                else { Updater.InstallAsync(r).GetAwaiter().GetResult(); log = $"installed {r.Tag} over {Updater.Current}"; }
+            }
+            catch (Exception e) { log = "ERROR " + e.Message; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-update.txt"), log);
+            return;
+        }
         // Otto.exe --settings → just the settings window
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {
@@ -115,7 +135,10 @@ static class Program
             return;
         }
         using var mutex = new Mutex(true, "Otto.SingleInstance", out bool first);
-        if (!first) return;
+        bool updated = Environment.GetCommandLineArgs().Contains("--updated");
+        // right after an update the previous copy is still closing: wait for it instead of quitting
+        if (!first && !(updated && WaitForMutex(mutex))) return;
+        if (updated) Updater.CleanUpAfterUpdate();
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayApp());
     }
@@ -136,6 +159,9 @@ sealed class TrayApp : ApplicationContext
     string? lastReply;
     double chatCost;
     long chatTokens, chatCached;
+    Updater.Release? pendingUpdate;
+    readonly System.Windows.Forms.Timer updateTimer = new();
+    ToolStripMenuItem? updateItem;
     string chatId = ChatStore.NewId();
     bool costKnown = true, replySounded, toldFallback;
     volatile bool controlling;
@@ -201,6 +227,24 @@ sealed class TrayApp : ApplicationContext
             ResetCounter();
         };
         panel.HistoryRequested += ShowHistory;
+        panel.UpdateClicked += () => InstallUpdate();
+        panel.UpdateNotesClicked += () => { if (pendingUpdate != null) Tools.OpenUrl(pendingUpdate.PageUrl); };
+        panel.UpdateDismissed += () =>
+        {
+            if (pendingUpdate != null) Updater.Dismissed = pendingUpdate.Tag; // hide until a newer one
+            ShowUpdate(null);
+        };
+        // quiet daily check: first a minute after start (not to slow login), then every few hours
+        // (the Updater itself only asks GitHub once a day)
+        updateTimer.Interval = 60_000;
+        updateTimer.Tick += async (_, _) =>
+        {
+            updateTimer.Interval = 6 * 60 * 60_000;
+            if (pendingUpdate == null && await Updater.CheckIfDueAsync() is Updater.Release r) ShowUpdate(r);
+        };
+        updateTimer.Start();
+        if (Environment.GetCommandLineArgs().Contains("--updated"))
+            panel.AddSystem($"Updated to Otto {Updater.Current}.");
         panel.UndoRequested += () =>
             Run("Undo what you just did in your last task: put moved or renamed files back, restore overwritten files from their backups, " +
                 "and reverse setting changes. Don't touch anything else. Then tell me in one line what you undid, or what can't be undone.");
@@ -264,6 +308,18 @@ sealed class TrayApp : ApplicationContext
         var sounds = new ToolStripMenuItem("Sounds") { Checked = Sfx.Enabled };
         sounds.Click += (_, _) => { Sfx.Enabled = !sounds.Checked; sounds.Checked = Sfx.Enabled; };
         m.Items.Add(sounds);
+        updateItem = new ToolStripMenuItem("Update") { Visible = false };
+        updateItem.Click += (_, _) => InstallUpdate();
+        m.Items.Add(updateItem);
+        m.Items.Add("Check for updates", null, async (_, _) =>
+        {
+            try
+            {
+                if (await Updater.CheckNowAsync() is Updater.Release r) { ShowUpdate(r); panel.ShowPanel(); }
+                else tray.ShowBalloonTip(3000, "Otto", $"You're on the latest version ({Updater.Current}).", ToolTipIcon.None);
+            }
+            catch { tray.ShowBalloonTip(3000, "Otto", "Couldn't reach GitHub to check for updates.", ToolTipIcon.None); }
+        });
         m.Items.Add(new ToolStripSeparator());
         m.Items.Add("Quit", null, (_, _) => ExitThread());
         return m;
@@ -355,6 +411,30 @@ sealed class TrayApp : ApplicationContext
             });
         }
         menu.Show(Cursor.Position);
+    }
+
+    void ShowUpdate(Updater.Release? r)
+    {
+        pendingUpdate = r;
+        panel.SetUpdate(r == null ? null : $"Otto {r.Version} is out");
+        if (updateItem != null) { updateItem.Text = r == null ? "Update" : $"Update to {r.Version}"; updateItem.Visible = r != null; }
+    }
+
+    async void InstallUpdate()
+    {
+        var r = pendingUpdate;
+        if (r == null) return;
+        if (cts != null) { panel.AddSystem("I'll be ready to update once this task finishes."); return; }
+        try
+        {
+            await Updater.InstallAsync(r, new Progress<string>(s => panel.SetUpdate($"Otto {r.Version}: {s}")));
+            ExitThread(); // the new copy is starting and waits for this one to close
+        }
+        catch (Exception e)
+        {
+            panel.SetUpdate($"Otto {r.Version} is out");
+            panel.AddSystem("Couldn't update: " + e.Message);
+        }
     }
 
     void ResetCounter() { chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); }

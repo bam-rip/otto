@@ -21,6 +21,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.
 - **Chat history.** Every chat is saved. The history icon reopens an old one, and + starts a new one without losing the last.
 - **Attachments.** Drag files onto the panel, or paste a screenshot with Ctrl+V. Otto sees images and works with files by their path.
+- **Updates.** Once a day Otto quietly checks for a new release. If there is one, a small bar in the panel offers to update: one click downloads it and restarts Otto, keeping your settings, keys and chats. You can turn the check off in settings.
 - **Stop and pin.** While Otto has control, a Stop button sits beside the banner. The pin icon keeps the panel open when you click elsewhere.
 - **Pick your AI.** It works with Anthropic (Claude, the default and the most tested), OpenAI, Google Gemini, xAI Grok, DeepSeek, OpenRouter, or a local model through Ollama or LM Studio.
 
@@ -42,7 +43,7 @@ Windows SmartScreen may say it "protected your PC" because the program isn't sig
 
 **From source (for developers):**
 
-You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto` with Start menu and desktop shortcuts, and sets it to start with Windows. Run it again after changing the code. **`Uninstall Otto.cmd`** removes it again; it keeps your notes and keys unless you run `uninstall.ps1 -All`. `publish.ps1` builds the release download.
+You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto` with Start menu and desktop shortcuts, and sets it to start with Windows. Run it again after changing the code. **`Uninstall Otto.cmd`** removes it again; it keeps your notes and keys unless you run `uninstall.ps1 -All`. `publish.ps1` builds the release download. Bump `<Version>` in `Otto.csproj` before publishing a new release, so installed copies see it as newer.
 
 ## Using it
 
