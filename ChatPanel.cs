@@ -42,7 +42,7 @@ sealed class ChatPanel : Form
     public bool Pinned { get; set; }
 
     public event Action<string>? Submit;
-    public event Action? StopRequested, MicToggled, ClearRequested, SettingsRequested;
+    public event Action? StopRequested, MicToggled, ClearRequested, SettingsRequested, RetryRequested, EditRequested;
 
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -63,6 +63,8 @@ sealed class ChatPanel : Form
 
         chat = new ChatView(this);
         chat.SuggestionClicked += s => Submit?.Invoke(s);
+        chat.RetryRequested += () => RetryRequested?.Invoke();
+        chat.EditRequested += () => EditRequested?.Invoke();
         Controls.Add(chat);
 
         input.Multiline = true;
@@ -391,8 +393,29 @@ sealed class ChatPanel : Form
 
     void SetStatus(string text, Color color) { statusText = text; statusColor = color; Invalidate(); }
 
+    /// Removes your last message and Otto's answer from view; returns your message's text.
+    public string? RemoveLastTurn() => chat.RemoveLastTurn();
+
+    /// Puts text in the message box (dictation, edit) for you to check, without sending it.
+    public void SetInput(string text) => Ui(() =>
+    {
+        var current = input.Text.TrimEnd();
+        input.Text = current.Length > 0 ? current + " " + text : text;
+        input.SelectionStart = input.TextLength;
+        ShowPanel();
+        input.Focus();
+    });
+
+    public void SetTranscribing(bool on) => Ui(() =>
+    {
+        if (on) SetStatus("Transcribing…", Amber);
+        else SetStatus(busy ? "Working…" : "Ready", busy ? Amber : Ok);
+        Invalidate();
+    });
+
     public void SetBusy(bool on) => Ui(() =>
     {
+        chat.Busy = on;
         busy = on;
         chat.ShowTyping = on;
         if (!listening) SetStatus(on ? "Working…" : "Ready", on ? Amber : Ok);

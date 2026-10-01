@@ -13,6 +13,7 @@
   <ItemGroup>
     <!-- UI Automation (UiTree) lives in the WPF pack; referencing it directly keeps WinForms implicit usings intact -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
     <PackageReference Include="System.Speech" Version="8.0.0" />
     <EmbeddedResource Include="assets\otto-tray.ico" LogicalName="otto-tray.ico" />
     <EmbeddedResource Include="assets\otto.ico" LogicalName="otto.ico" />

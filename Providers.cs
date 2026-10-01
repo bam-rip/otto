@@ -190,6 +190,9 @@ static class SettingsWindow
         var animate = new CheckBox { Text = "Animate replies (text types out word by word)", AutoSize = true, Checked = Prefs.AnimateReplies };
         Add(animate);
         Add(Hint("On: a typewriter sound plays as the text appears. Off: the whole reply appears at once with the reply sound."));
+        var autoSend = new CheckBox { Text = "Send voice messages straight away", AutoSize = true, Checked = Prefs.VoiceAutoSend, Margin = new Padding(0, 12, 0, 0) };
+        Add(autoSend);
+        Add(Hint("Off: what you said goes into the message box so you can check it, then press Enter."));
         var readAloud = new CheckBox { Text = "Read replies aloud", AutoSize = true, Checked = Prefs.ReadAloud, Margin = new Padding(0, 12, 0, 0) };
         Add(readAloud);
         Add(Hint("Uses Windows' own voices. Change the voice in Windows Settings → Time & Language → Speech."));
@@ -249,6 +252,7 @@ static class SettingsWindow
         Providers.Set(chosen, "vision", vision.Checked ? "1" : "0");
         Prefs.AnimateReplies = animate.Checked;
         Prefs.ReadAloud = readAloud.Checked;
+        Prefs.VoiceAutoSend = autoSend.Checked;
     }
 }
 
@@ -261,6 +265,12 @@ static class Prefs
     {
         get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("AnimateReplies") as int? ?? 1) != 0; }
         set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("AnimateReplies", value ? 1 : 0); }
+    }
+
+    public static bool VoiceAutoSend
+    {
+        get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("VoiceAutoSend") as int? ?? 0) != 0; }
+        set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("VoiceAutoSend", value ? 1 : 0); }
     }
 
     public static bool ReadAloud

@@ -15,7 +15,8 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Use the web.** It searches, reads pages, and works inside your normal browser.
 - **Email and calendar** for Outlook, Hotmail and Microsoft 365: list, read, draft and send email (always with your approval), and check or add calendar events.
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
-- **Voice.** Push-to-talk dictation (Ctrl+Alt+J), and it can optionally read replies aloud.
+- **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
+- **Message controls.** Hover a message to copy it, retry Otto's last answer, or edit and resend your last message. Right-click for more.
 - **Pick your AI.** It works with Anthropic (Claude, the default and the most tested), OpenAI, Google Gemini, xAI Grok, DeepSeek, OpenRouter, or a local model through Ollama or LM Studio.
 
 ## Requirements
@@ -81,7 +82,7 @@ Otto only asks for permission to use your mail and calendar.
 ## Customising
 
 - **Sounds:** put `.wav` files in `%LOCALAPPDATA%\Otto\sounds` to replace any of Otto's sounds. The names are `send`, `reply`, `type`, `takeover`, `listen-on`, `listen-off`, `attention` and `error`. Restart Otto after adding them.
-- **Better voice recognition:** turn on *Online speech recognition* in Windows Settings → Privacy → Speech. Otherwise Otto falls back to Windows' older, less accurate engine.
+- **Free voice recognition:** turn on *Online speech recognition* in Windows Settings → Privacy → Speech. Otherwise voice needs Gemini or OpenAI as your provider, which transcribe it using a little of your API allowance.
 - **Icons:** `assets/make_icons.py` draws them (it needs Pillow).
 
 ## Limitations

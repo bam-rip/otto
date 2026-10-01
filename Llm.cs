@@ -338,6 +338,73 @@ static class Llm
         },
     };
 
+    // ---------------- voice transcription ----------------
+
+    /// Gemini takes audio in a normal chat message; OpenAI has a dedicated transcription endpoint.
+    /// Claude doesn't accept audio, and other OpenAI-style services vary too much to rely on.
+    public static bool CanTranscribe(AiConfig cfg) =>
+        !string.IsNullOrWhiteSpace(cfg.Key) && cfg.Provider.Id is "gemini" or "openai";
+
+    public static async Task<string> TranscribeAsync(AiConfig cfg, byte[] wav, CancellationToken ct)
+    {
+        if (cfg.Provider.Id == "openai")
+        {
+            HttpRequestMessage MakeOpenAi()
+            {
+                var form = new MultipartFormDataContent
+                {
+                    { new StringContent("gpt-4o-mini-transcribe"), "model" },
+                    { new ByteArrayContent(wav) { Headers = { ContentType = new("audio/wav") } }, "file", "speech.wav" },
+                };
+                var req = new HttpRequestMessage(HttpMethod.Post, cfg.BaseUrl + "/audio/transcriptions") { Content = form };
+                req.Headers.Add("Authorization", "Bearer " + cfg.Key);
+                return req;
+            }
+            using var res = await SendWithRetry(MakeOpenAi, ct);
+            return JsonNode.Parse(await res.Content.ReadAsStringAsync(ct))?["text"]?.GetValue<string>()?.Trim() ?? "";
+        }
+
+        // Gemini (OpenAI-compatible endpoint): one user message with the instruction and the audio
+        var body = new JsonObject
+        {
+            ["model"] = cfg.Fast,
+            ["messages"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["type"] = "text",
+                            ["text"] = "Transcribe this voice message exactly as spoken, with normal punctuation. " +
+                                       "Reply with only the transcript. If nothing intelligible was said, reply with nothing.",
+                        },
+                        new JsonObject
+                        {
+                            ["type"] = "input_audio",
+                            ["input_audio"] = new JsonObject { ["data"] = Convert.ToBase64String(wav), ["format"] = "wav" },
+                        },
+                    },
+                },
+            },
+            ["max_tokens"] = 800,
+        };
+        HttpRequestMessage MakeGemini()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, cfg.BaseUrl + "/chat/completions")
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Add("Authorization", "Bearer " + cfg.Key);
+            return req;
+        }
+        using var r = await SendWithRetry(MakeGemini, ct);
+        var j = JsonNode.Parse(await r.Content.ReadAsStringAsync(ct));
+        return j?["choices"]?[0]?["message"]?["content"]?.GetValue<string>()?.Trim() ?? "";
+    }
+
     // ---------------- shared ----------------
 
     /// Model list for the settings window: GET {base}/models works on every provider here.

@@ -34,6 +34,22 @@ sealed class Agent
     public required Action<double?, long, long> OnUsage { get; init; }
     public required Action<bool> OnControl { get; init; } // true while Otto drives the mouse/keyboard
 
+    /// Forget your last message and everything after it (retry / edit). Returns that message's text.
+    public string? UndoLastTurn()
+    {
+        lock (messages)
+        {
+            int i = -1;
+            for (int k = messages.Count - 1; k >= 0; k--)
+                if (messages[k]!["role"]!.GetValue<string>() == "user" && messages[k]!["content"] is JsonValue) { i = k; break; }
+            if (i < 0) return null;
+            var text = messages[i]!["content"]!.ToString();
+            while (messages.Count > i) messages.RemoveAt(messages.Count - 1);
+            // stored as "[3:41 PM] message"
+            return text.StartsWith('[') && text.IndexOf("] ") is int close and > 0 ? text[(close + 2)..] : text;
+        }
+    }
+
     public void Reset() { lock (messages) messages.Clear(); lastContext = 0; smart = false; }
 
     public async Task RunAsync(string userText, CancellationToken ct)

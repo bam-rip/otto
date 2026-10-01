@@ -85,6 +85,16 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-models.txt"), outp);
             return;
         }
+        // Otto.exe --transcribe file.wav → what the voice transcription makes of a recording, in %TEMP%\otto-transcript.txt
+        int tr = Array.IndexOf(Environment.GetCommandLineArgs(), "--transcribe");
+        if (tr >= 0)
+        {
+            string outp;
+            try { outp = Llm.TranscribeAsync(Providers.Current(), File.ReadAllBytes(Environment.GetCommandLineArgs()[tr + 1]), CancellationToken.None).GetAwaiter().GetResult(); }
+            catch (Exception e) { outp = "ERROR " + e.Message; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-transcript.txt"), outp);
+            return;
+        }
         // Otto.exe --settings → just the settings window
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {
@@ -170,6 +180,18 @@ sealed class TrayApp : ApplicationContext
         panel.MicToggled += ToggleMic;
         panel.ClearRequested += () => { if (cts == null) { agent.Reset(); panel.ClearLog(); chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); } };
         panel.SettingsRequested += SettingsWindow.Show;
+        panel.RetryRequested += () =>
+        {
+            if (cts != null) return;
+            panel.RemoveLastTurn();
+            if (agent.UndoLastTurn() is string again) Run(again);
+        };
+        panel.EditRequested += () =>
+        {
+            if (cts != null) return;
+            panel.RemoveLastTurn();
+            if (agent.UndoLastTurn() is string text) panel.SetInput(text);
+        };
 
         tray = new NotifyIcon
         {
@@ -261,20 +283,31 @@ sealed class TrayApp : ApplicationContext
             {
                 panel.ShowPanel();
                 Speaker.Stop();
-                await voice.StartAsync();
+                try { await voice.StartAsync(); }
+                catch
+                {
+                    if (voice.NeedsWindowsSetting) Tools.OpenUrl("ms-settings:privacy-speech");
+                    throw;
+                }
                 panel.SetListening(true);
-                if (voice.FallbackReason is string why && !toldFallback) { toldFallback = true; panel.AddSystem(why); }
+                if (voice.Note is string why && !toldFallback) { toldFallback = true; panel.AddSystem(why); }
                 return;
             }
             panel.SetListening(false);
-            var said = await voice.StopAsync();
+            panel.SetTranscribing(true);
+            string said;
+            try { said = await voice.StopAsync(); }
+            finally { panel.SetTranscribing(false); }
             if (string.IsNullOrWhiteSpace(said)) panel.AddSystem("Didn't catch anything.");
-            else Run(said);
+            // by default the words go in the box so you can check them; Enter sends
+            else if (Prefs.VoiceAutoSend) Run(said);
+            else panel.SetInput(said);
         }
         catch (Exception e)
         {
             panel.SetListening(false);
-            panel.AddSystem("Mic error: " + e.Message);
+            panel.SetTranscribing(false);
+            panel.AddSystem("Mic: " + e.Message);
         }
     }
 

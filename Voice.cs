@@ -1,64 +1,83 @@
-using System.Globalization;
-using System.Speech.Recognition;
 using System.Text;
+using NAudio.Wave;
 using Windows.Media.SpeechRecognition;
 using WinRecognizer = Windows.Media.SpeechRecognition.SpeechRecognizer;
 
 namespace Otto;
 
-/// Push-to-talk dictation. Uses Windows 10's online dictation engine (the one behind Win+H), which is far
-/// more accurate than the old offline one; falls back to the offline engine if online speech recognition is
-/// switched off in Windows privacy settings or unavailable.
+/// Push-to-talk dictation, best engine first:
+///  1. Windows' online dictation (the engine behind Win+H): free and accurate, but needs "Online speech
+///     recognition" switched on in Windows privacy settings.
+///  2. Otherwise, record the clip and have the AI provider transcribe it (Gemini and OpenAI can; Claude can't).
+/// The old offline Windows engine is no longer used: its free dictation is too inaccurate to be worth it.
 sealed class Voice : IDisposable
 {
     WinRecognizer? online;
-    SpeechRecognitionEngine? offline;
     readonly StringBuilder heard = new();
     TaskCompletionSource? stopped;
-    bool usingOnline;
+    WaveInEvent? mic;
+    MemoryStream? clip;
+    WaveFileWriter? writer;
+    enum Mode { None, Online, Record }
+    Mode mode;
 
     public bool Listening { get; private set; }
-    /// Set when the online engine couldn't start, so the panel can say why accuracy dropped.
-    public string? FallbackReason { get; private set; }
+    /// Why the best engine isn't in use (shown once in the panel), or null.
+    public string? Note { get; private set; }
+    /// True when Windows' online speech setting is what's missing (the panel offers to open it).
+    public bool NeedsWindowsSetting { get; private set; }
 
     public async Task StartAsync()
     {
         lock (heard) heard.Clear();
         stopped = new TaskCompletionSource();
+        Note = null;
+        NeedsWindowsSetting = false;
         try
         {
             online ??= await CreateOnline();
             await online.ContinuousRecognitionSession.StartAsync();
-            usingOnline = true;
-            FallbackReason = null;
+            mode = Mode.Online;
         }
         catch (Exception e)
         {
-            // 0x80045509: "Online speech recognition" is off in Settings → Privacy → Speech
-            FallbackReason = (uint)e.HResult == 0x80045509
-                ? "Online speech recognition is off in Windows (Settings → Privacy → Speech), so I'm using the older, less accurate one."
-                : "Couldn't start the better speech recogniser, so I'm using the older one.";
             online?.Dispose();
             online = null;
-            offline ??= CreateOffline();
-            offline.RecognizeAsync(RecognizeMode.Multiple);
-            usingOnline = false;
+            NeedsWindowsSetting = (uint)e.HResult == 0x80045509; // "Online speech recognition" is off
+            var cfg = Providers.Current();
+            if (!Llm.CanTranscribe(cfg))
+            {
+                throw new InvalidOperationException(NeedsWindowsSetting
+                    ? "Voice needs Windows' online speech recognition, which is off. Turn it on in Settings → Privacy → Speech (I've opened it), then try again."
+                    : "Windows' speech recognition couldn't start, and your AI provider can't transcribe audio. Try Gemini or OpenAI, or Win+H.");
+            }
+            Note = NeedsWindowsSetting
+                ? $"Windows' online speech recognition is off, so {cfg.Provider.Label} is transcribing your voice instead (uses a little of your API allowance). Turning it on in Settings → Privacy → Speech is free."
+                : $"Using {cfg.Provider.Label} to transcribe your voice.";
+            StartRecording();
+            mode = Mode.Record;
         }
         Listening = true;
     }
 
-    public async Task<string> StopAsync()
+    public async Task<string> StopAsync(CancellationToken ct = default)
     {
         if (!Listening) return "";
         Listening = false;
-        if (usingOnline && online != null)
+        if (mode == Mode.Online && online != null)
         {
             try { await online.ContinuousRecognitionSession.StopAsync(); } // lets the current phrase finish
             catch { }
+            await Task.WhenAny(stopped!.Task, Task.Delay(3000, ct));
+            lock (heard) return heard.ToString().Trim();
         }
-        else offline?.RecognizeAsyncStop();
-        await Task.WhenAny(stopped!.Task, Task.Delay(3000));
-        lock (heard) return heard.ToString().Trim();
+        if (mode == Mode.Record)
+        {
+            var wav = StopRecording();
+            if (wav == null || wav.Length < 16_000) return ""; // under half a second: nothing said
+            return await Llm.TranscribeAsync(Providers.Current(), wav, ct);
+        }
+        return "";
     }
 
     public void Abort()
@@ -66,11 +85,57 @@ sealed class Voice : IDisposable
         Listening = false;
         try
         {
-            if (usingOnline) _ = online?.ContinuousRecognitionSession.CancelAsync();
-            else offline?.RecognizeAsyncCancel();
+            if (mode == Mode.Online) _ = online?.ContinuousRecognitionSession.CancelAsync();
+            else StopRecording();
         }
         catch { }
     }
+
+    // ---- recording (for provider transcription) ----
+
+    void StartRecording()
+    {
+        clip = new MemoryStream();
+        var format = new WaveFormat(16000, 16, 1); // speech quality, small upload
+        writer = new WaveFileWriter(new IgnoreDisposeStream(clip), format);
+        mic = new WaveInEvent { WaveFormat = format, BufferMilliseconds = 50 };
+        mic.DataAvailable += (_, a) =>
+        {
+            // stop at 2 minutes so a forgotten mic can't make a huge upload
+            if (writer != null && writer.Length < 16000 * 2 * 120) writer.Write(a.Buffer, 0, a.BytesRecorded);
+        };
+        mic.StartRecording();
+    }
+
+    byte[]? StopRecording()
+    {
+        if (mic == null) return null;
+        mic.StopRecording();
+        mic.Dispose();
+        mic = null;
+        writer?.Dispose(); // finalises the WAV header
+        writer = null;
+        var bytes = clip?.ToArray();
+        clip = null;
+        return bytes;
+    }
+
+    sealed class IgnoreDisposeStream(Stream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => inner.CanWrite;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] b, int o, int c) => inner.Read(b, o, c);
+        public override long Seek(long o, SeekOrigin s) => inner.Seek(o, s);
+        public override void SetLength(long v) => inner.SetLength(v);
+        public override void Write(byte[] b, int o, int c) => inner.Write(b, o, c);
+        protected override void Dispose(bool disposing) { } // the WAV writer closes its stream; keep ours
+    }
+
+    // ---- Windows online dictation ----
 
     async Task<WinRecognizer> CreateOnline()
     {
@@ -93,25 +158,10 @@ sealed class Voice : IDisposable
         return r;
     }
 
-    SpeechRecognitionEngine CreateOffline()
-    {
-        var installed = SpeechRecognitionEngine.InstalledRecognizers();
-        var info = installed.FirstOrDefault(r => r.Culture.Equals(CultureInfo.CurrentUICulture))
-                ?? installed.FirstOrDefault(r => r.Culture.TwoLetterISOLanguageName == "en")
-                ?? installed.FirstOrDefault()
-                ?? throw new InvalidOperationException("No Windows speech recognizer installed (Settings → Time & Language → Speech).");
-        var e = new SpeechRecognitionEngine(info);
-        e.LoadGrammar(new DictationGrammar());
-        e.SetInputToDefaultAudioDevice();
-        e.SpeechRecognized += (_, a) => { lock (heard) heard.Append(a.Result.Text).Append(' '); };
-        e.RecognizeCompleted += (_, _) => stopped?.TrySetResult();
-        return e;
-    }
-
     public void Dispose()
     {
         online?.Dispose();
-        offline?.Dispose();
+        StopRecording();
     }
 }
 

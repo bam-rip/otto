@@ -66,6 +66,16 @@ sealed class ChatView : Control
     bool showTyping;
 
     public event Action<string>? SuggestionClicked;
+    /// Retry: regenerate Otto's last reply. Edit: take back your last message to change it.
+    public event Action? RetryRequested, EditRequested;
+    /// Set by the panel while a request runs; retry/edit wait until it's done.
+    public bool Busy { get; set; }
+
+    // small buttons that appear beside a bubble while the mouse is over it
+    const string GlyphCopy = "\uE8C8", GlyphRetry = "\uE72C", GlyphEdit = "\uE70F";
+    readonly List<(Rectangle r, string glyph, Action act, string tip)> actionRects = new();
+    readonly ToolTip tips = new() { InitialDelay = 400 };
+    string? shownTip;
 
     public ChatView(ChatPanel owner)
     {
@@ -126,6 +136,18 @@ sealed class ChatView : Control
     public void CancelAsks()
     {
         foreach (var a in items.OfType<Ask>()) a.Tcs.TrySetResult(false);
+    }
+
+    /// Removes your last message and everything after it (for retry and edit). Returns its text.
+    public string? RemoveLastTurn()
+    {
+        int i = items.FindLastIndex(it => it is Msg { User: true });
+        if (i < 0) return null;
+        var text = ((Msg)items[i]).Text;
+        items.RemoveRange(i, items.Count - i);
+        streaming = null;
+        Changed();
+        return text;
     }
 
     public void Clear()
@@ -251,6 +273,7 @@ sealed class ChatView : Control
             g.Restore(s);
         }
         if (showTyping) DrawTyping(g);
+        DrawActions(g);
         g.Restore(state);
 
         // thin overlay scrollbar, only when there's something to scroll
@@ -386,11 +409,57 @@ sealed class ChatView : Control
         bool hand = items.Count == 0
             ? suggestionRects.Any(s => s.r.Contains(e.Location))
             : items.OfType<Ask>().Any(a => a.Answer == null && (a.Allow.Contains(Content(e.Location)) || a.Deny.Contains(Content(e.Location))));
+        var hit = actionRects.FirstOrDefault(a => a.r.Contains(Content(e.Location)));
+        if (hit.tip != null) hand = true;
+        if (hit.tip != shownTip) { shownTip = hit.tip; tips.SetToolTip(this, hit.tip); }
         Cursor = hand ? Cursors.Hand : Cursors.Default;
         Invalidate();
     }
 
+    string Transcript() => string.Join("\n\n", items.OfType<Msg>().Select(m => (m.User ? "You: " : "Otto: ") + m.Text));
+
     protected override void OnMouseLeave(EventArgs e) { mouse = new Point(-1, -1); Invalidate(); }
+
+    /// Copy on every message; Retry on Otto's last reply; Edit on your last message. They sit beside the
+    /// bubble's bottom edge (in the empty side of the row), so showing them never moves anything.
+    void DrawActions(Graphics g)
+    {
+        actionRects.Clear();
+        if (mouse.X < 0) return;
+        var p = Content(mouse);
+        int lastUser = items.FindLastIndex(it => it is Msg { User: true });
+        int lastOtto = items.FindLastIndex(it => it is Msg { User: false });
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (items[i] is not Msg m) continue;
+            // hover zone: the bubble's whole row, so moving toward the buttons doesn't hide them
+            var row = new Rectangle(G, m.Box.Top, Inner, m.Box.Height);
+            if (!row.Contains(p)) continue;
+
+            var acts = new List<(string glyph, Action act, string tip)> { (GlyphCopy, () => Clipboard.SetText(m.Text), "Copy") };
+            if (!Busy && !m.User && i == lastOtto && lastUser >= 0) acts.Add((GlyphRetry, () => RetryRequested?.Invoke(), "Try again"));
+            if (!Busy && m.User && i == lastUser) acts.Add((GlyphEdit, () => EditRequested?.Invoke(), "Edit and resend"));
+
+            int size = D(26), gap = D(2);
+            int x = m.User ? m.Box.Left - D(6) - acts.Count * (size + gap) : m.Box.Right + D(6);
+            int y = m.Box.Bottom - size;
+            foreach (var (glyph, act, tip) in acts)
+            {
+                var r = new Rectangle(x, y, size, size);
+                bool hot = r.Contains(p);
+                if (hot) using (var hb = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillRectangle(hb, r);
+                bool justCopied = glyph == GlyphCopy && copiedMsg == m && copiedAt > DateTime.Now.AddSeconds(-1.2);
+                TextRenderer.DrawText(g, justCopied ? "" : glyph, this.glyph, // tick for a moment after copying
+                    r, hot ? ChatPanel.Fg : ChatPanel.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                actionRects.Add((r, glyph, glyph == GlyphCopy ? () => { act(); copiedAt = DateTime.Now; copiedMsg = m; Invalidate(); } : act, tip));
+                x += size + gap;
+            }
+            break;
+        }
+    }
+
+    DateTime copiedAt;
+    Msg? copiedMsg;
 
     protected override void OnMouseUp(MouseEventArgs e)
     {
@@ -401,6 +470,9 @@ sealed class ChatView : Control
             return;
         }
         var p = Content(e.Location);
+        if (e.Button == MouseButtons.Left)
+            foreach (var (r, _, act, _) in actionRects)
+                if (r.Contains(p)) { act(); return; }
         foreach (var it in items)
         {
             if (it is Ask { Answer: null } a && e.Button == MouseButtons.Left)
@@ -412,6 +484,10 @@ sealed class ChatView : Control
             {
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Copy", null, (_, _) => Clipboard.SetText(m.Text));
+                menu.Items.Add("Copy whole chat", null, (_, _) => Clipboard.SetText(Transcript()));
+                bool last = items.FindLastIndex(x => x is Msg mm && mm.User == m.User) == items.IndexOf(m);
+                if (!Busy && last && !m.User) menu.Items.Add("Try again", null, (_, _) => RetryRequested?.Invoke());
+                if (!Busy && last && m.User) menu.Items.Add("Edit and resend", null, (_, _) => EditRequested?.Invoke());
                 menu.Show(this, e.Location);
                 return;
             }
