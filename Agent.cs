@@ -16,7 +16,8 @@ sealed class Agent
     const int KeepTurns = 4; // turns kept word-for-word when summarising
 
     readonly JsonArray messages = new();
-    bool smart;     // on the harder-tasks model right now
+    bool smart;
+    bool smartBlocked; // the bigger model hit its quota during this request     // on the harder-tasks model right now
     AiConfig cfg = Providers.Current();
     long lastContext; // tokens the last call read (fresh + cached)
     DateTime lastTurnEnd;
@@ -34,6 +35,24 @@ sealed class Agent
     public required Action<double?, long, long> OnUsage { get; init; }
     public required Action<bool> OnControl { get; init; } // true while Otto drives the mouse/keyboard
 
+    /// A message you typed (as opposed to tool results, which are also "user" messages to the API).
+    public static bool IsTurnStart(JsonNode m) =>
+        m["role"]?.GetValue<string>() == "user" &&
+        (m["content"] is JsonValue || m["content"] is JsonArray a && !a.Any(b => b?["type"]?.GetValue<string>() == "tool_result"));
+
+    /// What you typed in a turn-start message, without the "[3:41 PM] " time stamp or the attachment note.
+    public static string? TurnText(JsonNode m)
+    {
+        if (!IsTurnStart(m)) return null;
+        var raw = m["content"] is JsonValue v ? v.ToString()
+            : m["content"]!.AsArray().FirstOrDefault(b => b?["type"]?.GetValue<string>() == "text")?["text"]?.ToString() ?? "";
+        if (raw.StartsWith('[') && raw.IndexOf("] ") is int close and > 0) raw = raw[(close + 2)..];
+        int att = raw.IndexOf(AttachNote);
+        return att >= 0 ? raw[..att].TrimEnd() : raw;
+    }
+
+    const string AttachNote = "\n\n(Attached:";
+
     /// Forget your last message and everything after it (retry / edit). Returns that message's text.
     public string? UndoLastTurn()
     {
@@ -41,18 +60,32 @@ sealed class Agent
         {
             int i = -1;
             for (int k = messages.Count - 1; k >= 0; k--)
-                if (messages[k]!["role"]!.GetValue<string>() == "user" && messages[k]!["content"] is JsonValue) { i = k; break; }
+                if (IsTurnStart(messages[k]!)) { i = k; break; }
             if (i < 0) return null;
-            var text = messages[i]!["content"]!.ToString();
+            var text = TurnText(messages[i]!);
             while (messages.Count > i) messages.RemoveAt(messages.Count - 1);
-            // stored as "[3:41 PM] message"
-            return text.StartsWith('[') && text.IndexOf("] ") is int close and > 0 ? text[(close + 2)..] : text;
+            return text;
         }
+    }
+
+    /// The conversation so far (for saving to history).
+    public JsonArray Snapshot() { lock (messages) return (JsonArray)messages.DeepClone(); }
+
+    /// Continue an older chat from history.
+    public void Load(JsonArray saved)
+    {
+        lock (messages)
+        {
+            messages.Clear();
+            foreach (var m in saved) messages.Add(m!.DeepClone());
+        }
+        lastContext = 0;
+        smart = false;
     }
 
     public void Reset() { lock (messages) messages.Clear(); lastContext = 0; smart = false; }
 
-    public async Task RunAsync(string userText, CancellationToken ct)
+    public async Task RunAsync(string userText, CancellationToken ct, IReadOnlyList<Attachment>? attachments = null)
     {
         // If the last turn needed the bigger model, a quick follow-up ("make it longer", "now send it") usually
         // does too, and its cache is still warm. After a break, start cheap again.
@@ -62,6 +95,7 @@ sealed class Agent
         cfg = now;
         if (Providers.Problem(cfg) is string problem) throw new InvalidOperationException(problem);
         Desktop.NewTurn();
+        smartBlocked = false;
         if (lastContext > SummariseAbove)
         {
             try { await SummariseOlderTurns(ct); }
@@ -73,13 +107,23 @@ sealed class Agent
         try
         {
             // the time goes in the message, not the system prompt, so the cached prefix stays identical
-            messages.Add(new JsonObject { ["role"] = "user", ["content"] = $"[{DateTime.Now:h:mm tt}] {userText}" });
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = UserContent(userText, attachments) });
             PruneObservations(keep: 0); // last task's screen readings are stale; don't pay to resend them
+            DropOldAttachedImages();
             for (int step = 0; step < MaxSteps; step++)
             {
                 PruneObservations(keep: 2);
-                if (step == EscalateAfterSteps || errorsInARow >= 2) smart = true;
-                var reply = await CallAsync(ct);
+                if (!smartBlocked && (step == EscalateAfterSteps || errorsInARow >= 2)) smart = true;
+                JsonNode reply;
+                try { reply = await CallAsync(ct); }
+                catch (Exception e) when (smart && cfg.Smart != cfg.Fast && e.Message.StartsWith("API 429"))
+                {
+                    // the bigger model's allowance is used up (common on free tiers): carry on with the everyday one
+                    smart = false;
+                    smartBlocked = true;
+                    OnTool($"{cfg.Smart} is over its limit, continuing with {cfg.Fast}");
+                    reply = await CallAsync(ct);
+                }
                 if (reply["usage"] is JsonNode u)
                 {
                     Report(u, Model);
@@ -118,8 +162,9 @@ sealed class Agent
                         {
                             if (name == "escalate")
                             {
-                                output = smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
-                                smart = true;
+                                output = smartBlocked ? "The stronger model is over its usage limit right now. Carry on with this one."
+                                    : smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
+                                if (!smartBlocked) smart = true;
                             }
                             else if (name == "run_routine")
                             {
@@ -224,9 +269,50 @@ sealed class Agent
         }
     }
 
+    /// Images you attached stay visible for your next few messages (follow-ups like "what was the number
+    /// again?" need them), then become a short note so they don't cost ~1k tokens on every step forever.
+    const int KeepImageTurns = 3;
+
+    void DropOldAttachedImages()
+    {
+        lock (messages)
+        {
+            var starts = Enumerable.Range(0, messages.Count).Where(i => IsTurnStart(messages[i]!)).ToList();
+            foreach (var i in starts.Take(Math.Max(0, starts.Count - KeepImageTurns)))
+            {
+                if (messages[i]!["content"] is not JsonArray blocks) continue;
+                for (int k = 0; k < blocks.Count; k++)
+                    if (blocks[k]?["type"]?.GetValue<string>() == "image")
+                        blocks[k] = new JsonObject { ["type"] = "text", ["text"] = "[image you shared earlier]" };
+            }
+        }
+    }
+
     const string Stub = "[older screen reading removed]";
     const string Unchanged = "Nothing changed";
     static bool IsStub(JsonNode? c) => c is JsonValue v && v.ToString().EndsWith(Stub);
+
+    /// Your message as the API wants it: plain text, or text plus the images you attached. Attached files
+    /// are listed by path so Otto can open or read them with its tools.
+    JsonNode UserContent(string text, IReadOnlyList<Attachment>? attachments)
+    {
+        var stamped = $"[{DateTime.Now:h:mm tt}] {text}";
+        if (attachments == null || attachments.Count == 0) return stamped;
+        var files = attachments.Where(a => a.FilePath != null).Select(a => a.FilePath!).ToList();
+        var images = attachments.Where(a => a.Jpeg != null).ToList();
+        var note = new List<string>();
+        if (files.Count > 0) note.Add("files " + string.Join(", ", files));
+        if (images.Count > 0) note.Add(cfg.Vision ? $"{images.Count} image(s), shown below" : $"{images.Count} image(s) the current model can't see");
+        var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = stamped + AttachNote + " " + string.Join("; ", note) + ")" } };
+        if (cfg.Vision)
+            foreach (var img in images)
+                content.Add(new JsonObject
+                {
+                    ["type"] = "image",
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = Convert.ToBase64String(img.Jpeg!) },
+                });
+        return content;
+    }
 
     string Model => smart && cfg.Smart.Length > 0 ? cfg.Smart : cfg.Fast;
 
@@ -248,7 +334,7 @@ sealed class Agent
     async Task SummariseOlderTurns(CancellationToken ct)
     {
         // turns start at user messages whose content is plain text (tool results are arrays)
-        var starts = Enumerable.Range(0, messages.Count).Where(i => messages[i]!["role"]!.GetValue<string>() == "user" && messages[i]!["content"] is JsonValue).ToList();
+        var starts = Enumerable.Range(0, messages.Count).Where(i => IsTurnStart(messages[i]!)).ToList();
         if (starts.Count < KeepTurns + 2) return;
         int cut = starts[^KeepTurns];
 
@@ -258,6 +344,7 @@ sealed class Agent
             var m = messages[i]!;
             var who = m["role"]!.GetValue<string>() == "user" ? "User" : "Otto";
             if (m["content"] is JsonValue v) { transcript.AppendLine($"{who}: {v}"); continue; }
+            if (TurnText(m) is string said) { transcript.AppendLine($"User: {said}"); continue; }
             foreach (var b in m["content"]!.AsArray())
             {
                 switch (b!["type"]!.GetValue<string>())

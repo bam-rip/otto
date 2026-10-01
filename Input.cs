@@ -16,6 +16,7 @@ static partial class Desktop
     static void MoveTo(Point p)
     {
         // absolute coordinates are 0..65535 across the whole virtual desktop
+        ControlOverlay.Avoid(p); // never click our own Stop button
         var v = SystemInformation.VirtualScreen;
         int ax = (int)Math.Round((p.X - v.X) * 65535.0 / (v.Width - 1));
         int ay = (int)Math.Round((p.Y - v.Y) * 65535.0 / (v.Height - 1));

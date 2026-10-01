@@ -67,12 +67,19 @@ sealed class ChatView : Control
 
     public event Action<string>? SuggestionClicked;
     /// Retry: regenerate Otto's last reply. Edit: take back your last message to change it.
-    public event Action? RetryRequested, EditRequested;
+    public event Action? RetryRequested, EditRequested, UndoRequested;
     /// Set by the panel while a request runs; retry/edit wait until it's done.
     public bool Busy { get; set; }
 
     // small buttons that appear beside a bubble while the mouse is over it
-    const string GlyphCopy = "\uE8C8", GlyphRetry = "\uE72C", GlyphEdit = "\uE70F";
+    const string GlyphCopy = "\uE8C8", GlyphRetry = "\uE72C", GlyphEdit = "\uE70F", GlyphUndo = "\uE7A7";
+
+    /// Did Otto use tools (i.e. maybe change something) since your last message?
+    bool LastTurnActed()
+    {
+        int lastUser = items.FindLastIndex(it => it is Msg { User: true });
+        return lastUser >= 0 && items.Skip(lastUser).Any(it => it is Note { Tool: true });
+    }
     readonly List<(Rectangle r, string glyph, Action act, string tip)> actionRects = new();
     readonly ToolTip tips = new() { InitialDelay = 400 };
     string? shownTip;
@@ -438,6 +445,7 @@ sealed class ChatView : Control
 
             var acts = new List<(string glyph, Action act, string tip)> { (GlyphCopy, () => Clipboard.SetText(m.Text), "Copy") };
             if (!Busy && !m.User && i == lastOtto && lastUser >= 0) acts.Add((GlyphRetry, () => RetryRequested?.Invoke(), "Try again"));
+            if (!Busy && !m.User && i == lastOtto && LastTurnActed()) acts.Add((GlyphUndo, () => UndoRequested?.Invoke(), "Undo what Otto just did"));
             if (!Busy && m.User && i == lastUser) acts.Add((GlyphEdit, () => EditRequested?.Invoke(), "Edit and resend"));
 
             int size = D(26), gap = D(2);
@@ -487,6 +495,7 @@ sealed class ChatView : Control
                 menu.Items.Add("Copy whole chat", null, (_, _) => Clipboard.SetText(Transcript()));
                 bool last = items.FindLastIndex(x => x is Msg mm && mm.User == m.User) == items.IndexOf(m);
                 if (!Busy && last && !m.User) menu.Items.Add("Try again", null, (_, _) => RetryRequested?.Invoke());
+                if (!Busy && last && !m.User && LastTurnActed()) menu.Items.Add("Undo what Otto just did", null, (_, _) => UndoRequested?.Invoke());
                 if (!Busy && last && m.User) menu.Items.Add("Edit and resend", null, (_, _) => EditRequested?.Invoke());
                 menu.Show(this, e.Location);
                 return;

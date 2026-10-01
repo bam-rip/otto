@@ -82,6 +82,11 @@ sealed class ControlOverlay : LayeredWindow
 {
     static ControlOverlay? instance;
     static Ripple? ripple;
+    static StopPill? stop;
+    /// The banner's position on screen, so the Stop pill can sit beside it.
+    internal static Rectangle BannerRect;
+    /// Clicked the Stop pill.
+    public static event Action? StopClicked;
 
     const int GlowDepth = 70; // px the glow reaches in from each edge
 
@@ -95,6 +100,9 @@ sealed class ControlOverlay : LayeredWindow
         _ = instance.Handle;
         ripple = new Ripple();
         _ = ripple.Handle;
+        stop = new StopPill();
+        _ = stop.Handle;
+        stop.Clicked += () => StopClicked?.Invoke();
     }
 
     public static void Show(bool on)
@@ -112,6 +120,7 @@ sealed class ControlOverlay : LayeredWindow
                 // the glow is drawn and uploaded once; the full-screen bitmap is freed straight after
                 using (var frame = Render(o.Width, o.Height)) o.Upload(frame, 0);
                 o.anim.Start();
+                stop?.ShowBeside(BannerRect, o.Location);
                 Sfx.Takeover();
             }
             else if (!on && o.Visible)
@@ -119,8 +128,18 @@ sealed class ControlOverlay : LayeredWindow
                 o.anim.Stop();
                 o.Visible = false;
                 ripple?.Stop();
+                stop?.Hide();
             }
         });
+    }
+
+    /// Called just before Otto moves the mouse somewhere: if that's on the Stop pill, hide it for a moment
+    /// so Otto can't stop itself by accident. Blocks until done, since the click follows immediately.
+    public static void Avoid(Point screen)
+    {
+        var s = stop;
+        if (s == null || !StopPill.ScreenBounds.Contains(screen)) return;
+        try { s.Invoke(() => s.Dodge()); } catch { }
     }
 
     public static void Pulse(Point screen)
@@ -191,6 +210,7 @@ sealed class ControlOverlay : LayeredWindow
         int bw = (int)(Math.Max(ts.Width, cs.Width) + icon + pad * 3);
         int bh = (int)(ts.Height + cs.Height + pad * 1.4f);
         var r = new Rectangle((screenW - bw) / 2, (int)(16 * dpi), bw, bh);
+        BannerRect = r;
 
         // soft shadow, like the shell's flyouts
         for (int i = 6; i >= 1; i--)
@@ -282,4 +302,95 @@ sealed class Ripple : LayeredWindow
         }
         Upload(canvas, 255);
     }
+}
+
+/// A real, clickable Stop button beside the banner while Otto has control (the glow and banner are
+/// click-through). It never takes focus away from the app Otto is using, and is hidden from screenshots.
+sealed class StopPill : Form
+{
+    public event Action? Clicked;
+    static readonly object boundsLock = new();
+    static Rectangle screenBounds = Rectangle.Empty;
+    /// Read from Otto's worker thread, written on the UI thread.
+    internal static Rectangle ScreenBounds { get { lock (boundsLock) return screenBounds; } }
+    static Rectangle ScreenBoundsBox { set { lock (boundsLock) screenBounds = value; } }
+    bool hot;
+    readonly System.Windows.Forms.Timer back = new() { Interval = 1500 };
+
+    const int WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x8000000, WS_EX_TOPMOST = 0x8;
+    const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
+
+    public StopPill()
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        BackColor = Color.FromArgb(31, 31, 31);
+        DoubleBuffered = true;
+        Cursor = Cursors.Hand;
+        back.Tick += (_, _) => { back.Stop(); if (Tag is true) { Visible = true; } };
+    }
+
+    protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams
+    {
+        get { var cp = base.CreateParams; cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST; return cp; }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_MOUSEACTIVATE) { m.Result = (IntPtr)MA_NOACTIVATE; return; } // click without stealing focus
+        base.WndProc(ref m);
+    }
+
+    public void ShowBeside(Rectangle banner, Point screenOrigin)
+    {
+        float dpi = DeviceDpi / 96f;
+        var size = new Size((int)(84 * dpi), banner.Height);
+        Bounds = new Rectangle(screenOrigin.X + banner.Right + (int)(8 * dpi), screenOrigin.Y + banner.Top, size.Width, size.Height);
+        ScreenBoundsBox = Bounds;
+        Tag = true;
+        Visible = true;
+        SetWindowDisplayAffinity(Handle, 0x11);
+    }
+
+    public new void Hide()
+    {
+        Tag = false;
+        back.Stop();
+        Visible = false;
+        ScreenBoundsBox = Rectangle.Empty;
+    }
+
+    /// Step out of the way of one of Otto's own clicks, then come back.
+    public void Dodge()
+    {
+        Visible = false;
+        back.Stop();
+        back.Start();
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { hot = false; Invalidate(); }
+    protected override void OnMouseUp(MouseEventArgs e) { if (e.Button == MouseButtons.Left) Clicked?.Invoke(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        var bg = hot ? Color.FromArgb(196, 43, 28) : Color.FromArgb(31, 31, 31);
+        using (var b = new SolidBrush(bg)) g.FillRectangle(b, ClientRectangle);
+        using (var p = new Pen(hot ? bg : Color.FromArgb(70, 255, 255, 255))) g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+        float dpi = DeviceDpi / 96f;
+        int sq = (int)(9 * dpi);
+        using (var red = new SolidBrush(hot ? Color.White : Color.FromArgb(232, 72, 85)))
+            g.FillRectangle(red, (int)(14 * dpi), (Height - sq) / 2, sq, sq);
+        using var font = new Font("Segoe UI Semibold", 10f);
+        TextRenderer.DrawText(g, "Stop", font, new Rectangle((int)(30 * dpi), 0, Width - (int)(30 * dpi), Height), Color.White,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
 }

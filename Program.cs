@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.Win32;
 
 namespace Otto;
@@ -46,13 +47,24 @@ static class Program
                 OnUsage = (usd, tokens, _) => { cost += usd ?? 0; tokensUsed += tokens; },
                 OnControl = _ => { },
             };
+            // --attach file goes with the first message (tests images and files)
+            int ai = Array.IndexOf(args, "--attach");
+            var attach = ai >= 0 ? new List<Attachment> { Attachment.FromFile(args[ai + 1]) } : null;
             // several prompts separated by " || " run as one conversation, to test memory across turns
             foreach (var prompt in (args.ElementAtOrDefault(at + 1) ?? "Say OK.").Split(" || "))
             {
                 log.AppendLine("USER: " + prompt);
-                try { a.RunAsync(prompt, CancellationToken.None).GetAwaiter().GetResult(); }
+                try { a.RunAsync(prompt, CancellationToken.None, attach).GetAwaiter().GetResult(); }
                 catch (Exception e) { log.AppendLine("ERROR: " + e.Message); }
+                attach = null;
             }
+            // history round trip: save, list, reload, then remove the test chat
+            var testId = "test-" + ChatStore.NewId();
+            ChatStore.Save(testId, a.Snapshot());
+            var listed = ChatStore.List().FirstOrDefault(c => c.Id == testId);
+            var reloaded = ChatStore.Load(testId);
+            log.AppendLine($"HISTORY: title \"{listed?.Title}\", {reloaded?.Count ?? 0} messages reloaded, first turn text: \"{(reloaded?.Count > 0 ? Agent.TurnText(reloaded[0]!) : null)}\"");
+            ChatStore.Delete(testId);
             log.AppendLine($"cost ${cost:0.0000} ({tokensUsed} tokens, {Providers.Current().Provider.Label}: {Providers.Current().Fast})");
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-api-test.txt"), log.ToString());
             return;
@@ -124,6 +136,7 @@ sealed class TrayApp : ApplicationContext
     string? lastReply;
     double chatCost;
     long chatTokens, chatCached;
+    string chatId = ChatStore.NewId();
     bool costKnown = true, replySounded, toldFallback;
     volatile bool controlling;
 
@@ -178,7 +191,20 @@ sealed class TrayApp : ApplicationContext
         panel.Submit += Run;
         panel.StopRequested += Kill;
         panel.MicToggled += ToggleMic;
-        panel.ClearRequested += () => { if (cts == null) { agent.Reset(); panel.ClearLog(); chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); } };
+        panel.ClearRequested += () =>
+        {
+            if (cts != null) return;
+            ChatStore.Save(chatId, agent.Snapshot()); // the old chat stays in history
+            chatId = ChatStore.NewId();
+            agent.Reset();
+            panel.ClearLog();
+            ResetCounter();
+        };
+        panel.HistoryRequested += ShowHistory;
+        panel.UndoRequested += () =>
+            Run("Undo what you just did in your last task: put moved or renamed files back, restore overwritten files from their backups, " +
+                "and reverse setting changes. Don't touch anything else. Then tell me in one line what you undid, or what can't be undone.");
+        ControlOverlay.StopClicked += Kill;
         panel.SettingsRequested += SettingsWindow.Show;
         panel.RetryRequested += () =>
         {
@@ -250,7 +276,8 @@ sealed class TrayApp : ApplicationContext
         if (cts != null) { panel.AddSystem("Still working on the last request. Stop it first (Ctrl+Alt+End) or wait."); return; }
         lastReply = null;
         if (Providers.Problem(Providers.Current()) is string problem) { panel.AddSystem(problem); return; }
-        panel.AddUser(text);
+        var attached = panel.TakeAttachments();
+        panel.AddUser(attached.Count == 0 ? text : $"{text}\n(attached: {string.Join(", ", attached.Select(a => a.Name))})");
         Speaker.Stop();
         Sfx.Send();
         replySounded = false;
@@ -258,7 +285,7 @@ sealed class TrayApp : ApplicationContext
         panel.SetBusy(true);
         try
         {
-            await Task.Run(() => agent.RunAsync(text, cts.Token));
+            await Task.Run(() => agent.RunAsync(text, cts.Token, attached));
             if (Prefs.ReadAloud && lastReply != null) Speaker.Say(lastReply);
             // the panel auto-hides when you click away, so tell you when the job's done
             if (!panel.Visible)
@@ -272,8 +299,65 @@ sealed class TrayApp : ApplicationContext
             cts = null; // clear first, so a Stop pressed right now can't hit a disposed token
             done.Dispose();
             panel.SetBusy(false);
+            ChatStore.Save(chatId, agent.Snapshot()); // after every request, so nothing is ever lost
         }
     }
+
+    /// Reopen a saved chat from the history menu and carry on where it left off.
+    void OpenChat(string id)
+    {
+        if (cts != null || ChatStore.Load(id) is not JsonArray saved) return;
+        ChatStore.Save(chatId, agent.Snapshot());
+        agent.Load(saved);
+        chatId = id;
+        panel.ClearLog();
+        ResetCounter();
+        foreach (var m in saved)
+        {
+            if (Agent.TurnText(m!) is string said) { panel.AddUser(said); continue; }
+            if (m!["role"]?.GetValue<string>() != "assistant") continue;
+            if (m["content"] is JsonValue v) { panel.AddOttoInstant(v.ToString()); continue; }
+            foreach (var b in m["content"]!.AsArray())
+            {
+                var type = b?["type"]?.GetValue<string>();
+                if (type == "text" && b!["text"]?.ToString() is { Length: > 0 } t) panel.AddOttoInstant(t);
+                else if (type == "tool_use")
+                {
+                    string label;
+                    try { label = Tools.Describe(b!["name"]!.ToString(), b["input"]!); } catch { label = b!["name"]!.ToString(); }
+                    panel.AddTool(label);
+                }
+            }
+        }
+        panel.ShowPanel();
+    }
+
+    void ShowHistory()
+    {
+        var menu = new ContextMenuStrip { ShowImageMargin = false };
+        var chats = ChatStore.List().Where(c => c.Id != chatId).Take(20).ToList();
+        if (chats.Count == 0) menu.Items.Add(new ToolStripMenuItem("No saved chats yet") { Enabled = false });
+        foreach (var c in chats)
+        {
+            var when = c.When.Date == DateTime.Today ? c.When.ToString("h:mm tt")
+                     : c.When.Date == DateTime.Today.AddDays(-1) ? "Yesterday"
+                     : c.When.ToString("d MMM");
+            var id = c.Id;
+            menu.Items.Add($"{c.Title}    ({when})", null, (_, _) => OpenChat(id));
+        }
+        if (chats.Count > 0)
+        {
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("Delete all saved chats", null, (_, _) =>
+            {
+                if (MessageBox.Show("Delete every saved chat? This can't be undone.", "Otto", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    ChatStore.DeleteAll();
+            });
+        }
+        menu.Show(Cursor.Position);
+    }
+
+    void ResetCounter() { chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); }
 
     async void ToggleMic()
     {

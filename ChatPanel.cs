@@ -42,7 +42,12 @@ sealed class ChatPanel : Form
     public bool Pinned { get; set; }
 
     public event Action<string>? Submit;
-    public event Action? StopRequested, MicToggled, ClearRequested, SettingsRequested, RetryRequested, EditRequested;
+    public event Action? StopRequested, MicToggled, ClearRequested, SettingsRequested, RetryRequested, EditRequested, UndoRequested, HistoryRequested;
+
+    // attachments waiting to go with the next message (dropped files, pasted images)
+    readonly List<Attachment> attachments = new();
+    Rectangle rAttach, rPin, rHistory;
+    const string GlyphPin = "\uE718", GlyphPinned = "\uE840", GlyphHistory = "\uE81C", GlyphAttach = "\uE723";
 
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -65,6 +70,19 @@ sealed class ChatPanel : Form
         chat.SuggestionClicked += s => Submit?.Invoke(s);
         chat.RetryRequested += () => RetryRequested?.Invoke();
         chat.EditRequested += () => EditRequested?.Invoke();
+        chat.UndoRequested += () => UndoRequested?.Invoke();
+
+        // drop files anywhere on the panel to attach them
+        foreach (Control c in new Control[] { this, chat, input })
+        {
+            c.AllowDrop = true;
+            c.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
+            c.DragDrop += (_, e) =>
+            {
+                if (e.Data?.GetData(DataFormats.FileDrop) is string[] files)
+                    foreach (var f in files.Where(File.Exists).Take(10)) AddAttachment(Attachment.FromFile(f));
+            };
+        }
         Controls.Add(chat);
 
         input.Multiline = true;
@@ -78,6 +96,8 @@ sealed class ChatPanel : Form
         input.KeyDown += (_, e) =>
         {
             if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; SendInput(); }
+            // Ctrl+V with a screenshot or copied files on the clipboard attaches them
+            else if (e.KeyCode == Keys.V && e.Control && PasteAttachments()) e.SuppressKeyPress = true;
             // Up in an empty box brings back what you last sent, like a terminal
             else if (e.KeyCode == Keys.Up && input.TextLength == 0 && lastSent != null)
             {
@@ -123,9 +143,13 @@ sealed class ChatPanel : Form
         rHide = new Rectangle(iconRight - btn, D(16), btn, btn);
         rKey = new Rectangle(rHide.Left - btn, D(16), btn, btn);
         rNew = new Rectangle(rKey.Left - btn, D(16), btn, btn);
+        rPin = new Rectangle(rNew.Left - btn, D(16), btn, btn);
+        rHistory = new Rectangle(rPin.Left - btn, D(16), btn, btn);
 
+        rAttach = attachments.Count > 0 ? new Rectangle(g, rBox.Top - D(30), w - 2 * g, D(24)) : Rectangle.Empty;
         int chatTop = D(80);
-        chat.SetBounds(0, chatTop, w, rBox.Top - D(12) - chatTop);
+        int chatBottom = (attachments.Count > 0 ? rAttach.Top : rBox.Top) - D(12);
+        chat.SetBounds(0, chatTop, w, chatBottom - chatTop);
         Invalidate();
     }
 
@@ -188,7 +212,23 @@ sealed class ChatPanel : Form
         var status = costText.Length > 0 ? $"{statusText}   ·   {costText}" : statusText;
         TextRenderer.DrawText(g, status, smallFont, new Point(gut + D(14), D(52)), Dim, TextFormatFlags.NoPadding);
 
+        DrawGlyph(g, GlyphHistory, rHistory, Fg);
+        DrawGlyph(g, Pinned ? GlyphPinned : GlyphPin, rPin, Pinned ? Accent : Fg);
         DrawGlyph(g, "", rNew, Fg);
+
+        if (attachments.Count > 0)
+        {
+            // "📎 report.pdf, Pasted image   ×" — click to remove them
+            bool hot = rAttach.Contains(mouse);
+            using (var bb = new SolidBrush(Color.FromArgb(hot ? 40 : 24, 255, 255, 255))) g.FillRectangle(bb, rAttach);
+            TextRenderer.DrawText(g, GlyphAttach, glyphFont, new Rectangle(rAttach.X + D(6), rAttach.Y, D(20), rAttach.Height), Dim,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            var names = string.Join(", ", attachments.Select(a => a.Name));
+            TextRenderer.DrawText(g, names, smallFont, new Rectangle(rAttach.X + D(30), rAttach.Y, rAttach.Width - D(60), rAttach.Height), Fg,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "\uE711", glyphFont, new Rectangle(rAttach.Right - D(26), rAttach.Y, D(20), rAttach.Height), hot ? Fg : Dim,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+        }
         DrawGlyph(g, "", rKey, Fg);
         DrawGlyph(g, "", rHide, Fg);
 
@@ -266,7 +306,7 @@ sealed class ChatPanel : Form
     protected override void OnMouseMove(MouseEventArgs e)
     {
         mouse = e.Location;
-        bool overButton = rNew.Contains(mouse) || rKey.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
+        bool overButton = rHistory.Contains(mouse) || rPin.Contains(mouse) || rAttach.Contains(mouse) || rNew.Contains(mouse) || rKey.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
         Cursor = overButton ? Cursors.Hand : rBox.Contains(mouse) ? Cursors.IBeam : Cursors.Default;
         Invalidate();
     }
@@ -276,7 +316,10 @@ sealed class ChatPanel : Form
     protected override void OnMouseUp(MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
-        if (rNew.Contains(e.Location)) ClearRequested?.Invoke();
+        if (rHistory.Contains(e.Location)) HistoryRequested?.Invoke();
+        else if (rPin.Contains(e.Location)) { Pinned = !Pinned; Invalidate(); }
+        else if (rAttach.Contains(e.Location)) { attachments.Clear(); Relayout(); }
+        else if (rNew.Contains(e.Location)) ClearRequested?.Invoke();
         else if (rKey.Contains(e.Location)) SettingsRequested?.Invoke();
         else if (rHide.Contains(e.Location)) HidePanel();
         else if (rMic.Contains(e.Location)) MicToggled?.Invoke();
@@ -293,7 +336,8 @@ sealed class ChatPanel : Form
     void SendInput()
     {
         var text = input.Text.Trim();
-        if (text.Length == 0 || busy) return;
+        if (busy || text.Length == 0 && attachments.Count == 0) return;
+        if (text.Length == 0) text = "Have a look at this.";
         lastSent = text;
         input.Clear();
         Submit?.Invoke(text);
@@ -349,6 +393,8 @@ sealed class ChatPanel : Form
 
     public void AddUser(string t) => Ui(() => chat.AddMessage(t, user: true));
     public void AddOtto(string t) => Ui(() => chat.AddMessage(StripMarkdown(t), user: false, reveal: Prefs.AnimateReplies));
+    /// For reopening a saved chat: shown at once, no typing animation.
+    public void AddOttoInstant(string t) => Ui(() => chat.AddMessage(StripMarkdown(t), user: false));
 
     public void StreamOtto(string textSoFar, bool newBubble) => Ui(() =>
     {
@@ -392,6 +438,41 @@ sealed class ChatPanel : Form
     public void SetCost(string text) => Ui(() => { costText = text; Invalidate(); });
 
     void SetStatus(string text, Color color) { statusText = text; statusColor = color; Invalidate(); }
+
+    public void AddAttachment(Attachment a) => Ui(() =>
+    {
+        if (attachments.Count >= 10) return;
+        attachments.Add(a);
+        Relayout();
+        ShowPanel();
+    });
+
+    /// The attachments for the message being sent (and clears them).
+    public List<Attachment> TakeAttachments()
+    {
+        var list = new List<Attachment>(attachments);
+        Ui(() => { attachments.Clear(); Relayout(); });
+        return list;
+    }
+
+    bool PasteAttachments()
+    {
+        try
+        {
+            if (Clipboard.ContainsImage() && Clipboard.GetImage() is Image img)
+            {
+                using (img) AddAttachment(Attachment.FromImage(img, attachments.Count(a => a.FilePath == null) == 0 ? "Pasted image" : $"Pasted image {attachments.Count + 1}"));
+                return true;
+            }
+            if (Clipboard.ContainsFileDropList())
+            {
+                foreach (var f in Clipboard.GetFileDropList().Cast<string>().Where(File.Exists).Take(10)) AddAttachment(Attachment.FromFile(f));
+                return true;
+            }
+        }
+        catch { }
+        return false; // ordinary text: let the text box paste it
+    }
 
     /// Removes your last message and Otto's answer from view; returns your message's text.
     public string? RemoveLastTurn() => chat.RemoveLastTurn();

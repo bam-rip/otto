@@ -16,7 +16,10 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Email and calendar** for Outlook, Hotmail and Microsoft 365: list, read, draft and send email (always with your approval), and check or add calendar events.
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
 - **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
-- **Message controls.** Hover a message to copy it, retry Otto's last answer, or edit and resend your last message. Right-click for more.
+- **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.
+- **Chat history.** Every chat is saved. The history icon reopens an old one, and + starts a new one without losing the last.
+- **Attachments.** Drag files onto the panel, or paste a screenshot with Ctrl+V. Otto sees images and works with files by their path.
+- **Stop and pin.** While Otto has control, a Stop button sits beside the banner. The pin icon keeps the panel open when you click elsewhere.
 - **Pick your AI.** It works with Anthropic (Claude, the default and the most tested), OpenAI, Google Gemini, xAI Grok, DeepSeek, OpenRouter, or a local model through Ollama or LM Studio.
 
 ## Requirements
@@ -60,7 +63,7 @@ Please take these seriously:
 
 - What Otto sees (screen text, screenshots, files it reads, emails it opens) is sent to the AI provider you chose, so it can decide what to do. Close anything sensitive first, or use a local model.
 - Your API keys and email sign-in are stored in Windows Credential Manager, encrypted by Windows. Otto never sees your email password: you sign in on Microsoft's own page.
-- Notes, routines, custom sounds and file backups live in `%LOCALAPPDATA%\Otto`. Settings live in the registry under `HKCU\Software\Otto`.
+- Saved chats, notes, routines, custom sounds and file backups live in `%LOCALAPPDATA%\Otto`. Images and screenshots aren't kept in saved chats. Settings live in the registry under `HKCU\Software\Otto`.
 
 ## Costs
 
