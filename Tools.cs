@@ -18,7 +18,8 @@ static class Tools
         @"\b(Remove-Item|ri|rm|rmdir|del|erase|rd|Clear-Content|Clear-RecycleBin|Format-Volume|Clear-Disk|Initialize-Disk|diskpart|bcdedit|" +
         @"Stop-Computer|Restart-Computer|shutdown|Set-ExecutionPolicy|Uninstall-\w+|Remove-AppxPackage|Disable-ComputerRestore|" +
         @"Set-MpPreference|Add-MpPreference|takeown|icacls|cipher|vssadmin|wbadmin|Invoke-Expression|iex|sdelete)\b" +
-        @"|\bformat\s+[a-z]:|\breg\s+(add|delete|import)\b|HKLM:|HKEY_LOCAL_MACHINE|-Verb\s+RunAs" +
+        @"|\bformat\s+[a-z]:|\breg\s+(add|delete|import)\b|-Verb\s+RunAs" +
+        @"|\b(Set-ItemProperty|New-ItemProperty|New-Item|Set-Item|Rename-ItemProperty|Clear-ItemProperty|Rename-Item|Move-Item|Copy-Item)\b[^;|\n]*(HKLM:|HKEY_LOCAL_MACHINE)" +
         @"|::Delete\s*\(|\.Delete\s*\(|::WriteAllBytes|Remove-ItemProperty|-EncodedCommand|\s-enc\s",
         RegexOptions.IgnoreCase);
 
@@ -45,19 +46,19 @@ static class Tools
     [
       {"name":"web_search","description":"Search the web. Returns titles, URLs and snippets.",
        "input_schema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
-      {"name":"fetch_page","description":"Download a web page and return its readable text. Pass 'find' with a few keywords to get only the parts that mention them (much cheaper when you're after one fact).",
+      {"name":"fetch_page","description":"A web page's text. 'find' keywords returns only matching parts (cheaper).",
        "input_schema":{"type":"object","properties":{"url":{"type":"string"},"find":{"type":"string"}},"required":["url"]}},
-      {"name":"open","description":"Open a file, folder, URL, or any installed app by name (e.g. 'spotify', 'word', 'settings', 'paint') the way double-clicking it would. URLs open in the user's normal browser. Returns once its window is up.",
-       "input_schema":{"type":"object","properties":{"target":{"type":"string","description":"Path, URL, or app name"}},"required":["target"]}},
-      {"name":"window","description":"Manage open windows by (part of) their title: list them, bring one to the front, minimize, maximize, restore, or close it (apps still ask to save unsaved work).",
+      {"name":"open","description":"Open a file, folder, URL (user's browser) or installed app by name, e.g. 'spotify'. Waits for its window.",
+       "input_schema":{"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}},
+      {"name":"window","description":"List windows, or focus/minimize/maximize/restore/close one by part of its title.",
        "input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","focus","minimize","maximize","restore","close"]},"title":{"type":"string"}},"required":["action"]}},
       {"name":"list_dir","description":"List the files and folders in a directory.",
        "input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
       {"name":"read_file","description":"Read a text file or the text of a .docx document.",
        "input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
-      {"name":"write_file","description":"Create or overwrite a text file (.txt, .md, .csv, code, etc). An overwritten file's old version is kept in Otto's backups.",
+      {"name":"write_file","description":"Create or overwrite a text file (old version is backed up).",
        "input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
-      {"name":"run_powershell","description":"Run a PowerShell command and return its output. Commands that delete, install or change the system ask the user first.",
+      {"name":"run_powershell","description":"Run PowerShell, get its output. Deleting or system-changing commands ask the user first.",
        "input_schema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}
     ]
     """;

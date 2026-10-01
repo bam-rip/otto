@@ -16,18 +16,18 @@ static class Memory
 
     public static JsonNode ToolDefinitions() => JsonNode.Parse("""
     [
-      {"name":"remember","description":"Save a short, lasting note for future chats: how one of the user's apps is laid out, a shortcut that worked, a preference they stated, where something lives. One fact per call, one line. Don't save things that only matter today. To correct a note, pass 'replace' with the old line's text.",
+      {"name":"remember","description":"Save a one-line lasting note (app layout, working shortcut, preference, where something lives). 'replace' = text of a note to correct.",
        "input_schema":{"type":"object","properties":{"note":{"type":"string"},"replace":{"type":"string"}},"required":["note"]}},
-      {"name":"save_routine","description":"After a multi-step job WORKED, save the exact calls so next time it replays instantly without you. Only save steps that will work again: use 'name' clicks, keys and typing, never element numbers or x,y. Use {placeholders} for parts that change, e.g. text \"{message}\".",
+      {"name":"save_routine","description":"After a multi-step job worked, save its calls to replay later without you. Click by 'name', never element/x,y. {placeholders} for parts that change.",
        "input_schema":{"type":"object","properties":{
-         "name":{"type":"string","description":"short id, e.g. new_word_doc"},
-         "description":{"type":"string","description":"what it does and what each {placeholder} means"},
-         "calls":{"type":"array","description":"in order; each is {\"tool\":\"computer\"|\"open\"|\"run_powershell\"|\"write_file\", \"input\":{...same input you'd give that tool}}",
+         "name":{"type":"string"},
+         "description":{"type":"string","description":"what it does; what each placeholder means"},
+         "calls":{"type":"array","description":"{tool: computer|open|run_powershell|write_file, input}",
            "items":{"type":"object","properties":{"tool":{"type":"string"},"input":{"type":"object"}},"required":["tool","input"]}}},
         "required":["name","description","calls"]}},
-      {"name":"run_routine","description":"Replay a saved routine (listed in the system prompt). Returns what the screen looks like afterwards. If it fails partway, finish the job by hand and save a fixed version.",
-       "input_schema":{"type":"object","properties":{"name":{"type":"string"},"values":{"type":"object","description":"fills the {placeholders}"}},"required":["name"]}},
-      {"name":"forget_routine","description":"Delete a saved routine that's broken or no longer wanted.",
+      {"name":"run_routine","description":"Replay a saved routine. If it fails partway, finish by hand and save a fixed one.",
+       "input_schema":{"type":"object","properties":{"name":{"type":"string"},"values":{"type":"object"}},"required":["name"]}},
+      {"name":"forget_routine","description":"Delete a saved routine.",
        "input_schema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}
     ]
     """)!;

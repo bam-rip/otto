@@ -43,7 +43,7 @@ static class Program
                     log.AppendLine($"Otto (streamed in {++chunks} chunks): {t}");
                 },
                 OnTool = t => log.AppendLine("TOOL: " + t),
-                OnUsage = (usd, tokens) => { cost += usd ?? 0; tokensUsed += tokens; },
+                OnUsage = (usd, tokens, _) => { cost += usd ?? 0; tokensUsed += tokens; },
                 OnControl = _ => { },
             };
             // several prompts separated by " || " run as one conversation, to test memory across turns
@@ -113,7 +113,7 @@ sealed class TrayApp : ApplicationContext
     CancellationTokenSource? cts;
     string? lastReply;
     double chatCost;
-    long chatTokens;
+    long chatTokens, chatCached;
     bool costKnown = true, replySounded, toldFallback;
     volatile bool controlling;
 
@@ -153,11 +153,14 @@ sealed class TrayApp : ApplicationContext
                 if (on) panel.HidePanel(); // get out of the way of the clicks
                 ControlOverlay.Show(on);
             },
-            OnUsage = (usd, tokens) =>
+            OnUsage = (usd, tokens, cached) =>
             {
                 chatTokens += tokens;
+                chatCached += cached;
                 if (usd is double d) chatCost += d; else costKnown = false;
-                panel.SetCost(!costKnown ? $"{chatTokens / 1000.0:0.#}k tokens this chat"
+                // most tokens are the same instructions re-sent every step; say how many were cheap cache re-reads
+                var reused = chatCached > 0 ? $", {chatCached * 100 / Math.Max(1, chatTokens)}% cached" : "";
+                panel.SetCost(!costKnown ? $"{chatTokens / 1000.0:0.#}k tokens this chat{reused}"
                     : chatCost < 0.01 ? "under 1¢ this chat" : $"${chatCost:0.00} this chat");
             },
         };
@@ -165,7 +168,7 @@ sealed class TrayApp : ApplicationContext
         panel.Submit += Run;
         panel.StopRequested += Kill;
         panel.MicToggled += ToggleMic;
-        panel.ClearRequested += () => { if (cts == null) { agent.Reset(); panel.ClearLog(); chatCost = 0; chatTokens = 0; costKnown = true; panel.SetCost(""); } };
+        panel.ClearRequested += () => { if (cts == null) { agent.Reset(); panel.ClearLog(); chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); } };
         panel.SettingsRequested += SettingsWindow.Show;
 
         tray = new NotifyIcon

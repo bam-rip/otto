@@ -16,19 +16,19 @@ static partial class Desktop
     public static Size ShotSize => new((int)Math.Round(Screen.Width * Scale), (int)Math.Round(Screen.Height * Scale));
 
     public static JsonNode ToolDefinition() => JsonNode.Parse($$$"""
-    {"name":"computer","description":"See and control the user's screen ({{{ShotSize.Width}}}x{{{ShotSize.Height}}} screenshot pixels). Runs 'steps' in order, then reports what's on screen. By default that report is a cheap text list of the front window's controls, like [7] button \"Save\" @412,88; click one by its number with \"element\":7 instead of x,y. Ask for observe:'screenshot' only when you need to see pictures, layout or a canvas/game, or the list looks wrong. Batch steps whose outcome you can predict (e.g. click a field, type, press enter) into one call.",
+    {"name":"computer","description":"Use the screen ({{{ShotSize.Width}}}x{{{ShotSize.Height}}} px). Runs 'steps' in order, then reports the screen: by default a text list like [7] button \"Save\" @412,88 (click with \"element\":7).",
      "input_schema":{"type":"object","properties":{
-       "observe":{"type":"string","enum":["ui","screenshot","none"],"description":"What to return after the steps. Default 'ui' (text list of controls). 'none' when you don't need to look."},
+       "observe":{"type":"string","enum":["ui","screenshot","none"],"description":"default ui"},
        "steps":{"type":"array","items":{"type":"object","properties":{
          "action":{"type":"string","enum":["screenshot","click","double_click","right_click","middle_click","move","drag","scroll","type","key","wait","zoom"],
-           "description":"click/double_click/right_click/middle_click/move need x,y. drag: x,y to x2,y2. scroll: x,y + direction (+amount notches, default 3). type: text. key: keys like 'enter', 'ctrl+s', 'alt+tab', 'win+r'. wait: seconds. zoom: full-detail view of the box x,y,x2,y2 for reading small text (ends the batch)."},
-         "element":{"type":"integer","description":"Number from the last ui list; use instead of x,y"},
-         "name":{"type":"string","description":"Click/scroll the control with this label in the front window (for saved routines; slower than element)"},
+           "description":"clicks/move: element or x,y. drag: to x2,y2. scroll: direction, amount. type: text. key: e.g. 'ctrl+s'. wait: seconds. zoom: box x,y,x2,y2 at full detail."},
+         "element":{"type":"integer"},
+         "name":{"type":"string","description":"control label (for routines)"},
          "x":{"type":"integer"},"y":{"type":"integer"},"x2":{"type":"integer"},"y2":{"type":"integer"},
          "direction":{"type":"string","enum":["up","down","left","right"]},
          "amount":{"type":"integer"},"text":{"type":"string"},"keys":{"type":"string"},"seconds":{"type":"number"}},
          "required":["action"]}},
-       "confirm":{"type":"string","description":"Only for steps with real-world consequences that are hard to undo: buying or paying, signing or e-signing something, submitting a formal document/application/form (not a quick answer, search or chat message), or permanently deleting the user's files. Plain description, e.g. 'Place the $40 order on Amazon'. The user approves before any step runs. Never set it for ordinary clicking, typing, saving, opening or closing."}},
+       "confirm":{"type":"string","description":"Set ONLY for paying, signing, submitting a formal document, or permanent deletion: what will happen, e.g. 'Place the $40 order'. The user approves first."}},
       "required":["steps"]}}
     """)!;
 
