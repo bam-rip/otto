@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Otto</AssemblyName>
+    <RootNamespace>Otto</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>assets\otto.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- UI Automation (UiTree) lives in the WPF pack; referencing it directly keeps WinForms implicit usings intact -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+    <EmbeddedResource Include="assets\otto-tray.ico" LogicalName="otto-tray.ico" />
+    <EmbeddedResource Include="assets\otto.ico" LogicalName="otto.ico" />
+  </ItemGroup>
+</Project>

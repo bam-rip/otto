@@ -1,0 +1,352 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Text.Json.Nodes;
+
+namespace Otto;
+
+/// Sees and drives the real desktop. Coordinates the model uses are in screenshot pixels;
+/// they're scaled back to the real screen here.
+static partial class Desktop
+{
+    // ~790 image tokens at 16:9 (1280 wide was ~1230). 'zoom' covers the cases where detail matters.
+    const int ShotWidth = 1024;
+
+    public static Rectangle Screen => System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+    static double Scale => Math.Min(1.0, ShotWidth / (double)Screen.Width);
+    public static Size ShotSize => new((int)Math.Round(Screen.Width * Scale), (int)Math.Round(Screen.Height * Scale));
+
+    public static JsonNode ToolDefinition() => JsonNode.Parse($$$"""
+    {"name":"computer","description":"See and control the user's screen ({{{ShotSize.Width}}}x{{{ShotSize.Height}}} screenshot pixels). Runs 'steps' in order, then reports what's on screen. By default that report is a cheap text list of the front window's controls, like [7] button \"Save\" @412,88; click one by its number with \"element\":7 instead of x,y. Ask for observe:'screenshot' only when you need to see pictures, layout or a canvas/game, or the list looks wrong. Batch steps whose outcome you can predict (e.g. click a field, type, press enter) into one call.",
+     "input_schema":{"type":"object","properties":{
+       "observe":{"type":"string","enum":["ui","screenshot","none"],"description":"What to return after the steps. Default 'ui' (text list of controls). 'none' when you don't need to look."},
+       "steps":{"type":"array","items":{"type":"object","properties":{
+         "action":{"type":"string","enum":["screenshot","click","double_click","right_click","middle_click","move","drag","scroll","type","key","wait","zoom"],
+           "description":"click/double_click/right_click/middle_click/move need x,y. drag: x,y to x2,y2. scroll: x,y + direction (+amount notches, default 3). type: text. key: keys like 'enter', 'ctrl+s', 'alt+tab', 'win+r'. wait: seconds. zoom: full-detail view of the box x,y,x2,y2 for reading small text (ends the batch)."},
+         "element":{"type":"integer","description":"Number from the last ui list; use instead of x,y"},
+         "name":{"type":"string","description":"Click/scroll the control with this label in the front window (for saved routines; slower than element)"},
+         "x":{"type":"integer"},"y":{"type":"integer"},"x2":{"type":"integer"},"y2":{"type":"integer"},
+         "direction":{"type":"string","enum":["up","down","left","right"]},
+         "amount":{"type":"integer"},"text":{"type":"string"},"keys":{"type":"string"},"seconds":{"type":"number"}},
+         "required":["action"]}},
+       "confirm":{"type":"string","description":"Only for steps with real-world consequences that are hard to undo: buying or paying, signing or e-signing something, submitting a formal document/application/form (not a quick answer, search or chat message), or permanently deleting the user's files. Plain description, e.g. 'Place the $40 order on Amazon'. The user approves before any step runs. Never set it for ordinary clicking, typing, saving, opening or closing."}},
+      "required":["steps"]}}
+    """)!;
+
+    /// Models occasionally send an array argument as a JSON string ("[{...}]"); accept both.
+    public static JsonArray? ArrayOf(JsonNode? n)
+    {
+        if (n is JsonArray a) return a;
+        if (n is JsonValue v && v.TryGetValue<string>(out var s))
+        {
+            try { return JsonNode.Parse(s) as JsonArray; } catch (System.Text.Json.JsonException) { }
+        }
+        if (n is JsonObject o) return new JsonArray { o.DeepClone() }; // a single step not wrapped in a list
+        return null;
+    }
+
+    public static string Describe(JsonNode input)
+    {
+        var steps = ArrayOf(input["steps"]);
+        if (steps == null || steps.Count == 0) return "Looking at the screen";
+        return string.Join(" · ", steps.Select(s => DescribeStep(s!)));
+    }
+
+    static string DescribeStep(JsonNode s)
+    {
+        string a = s["action"]?.GetValue<string>() ?? "?";
+        string xy = s["name"] != null ? $" “{s["name"]}”" : s["element"] != null ? $" #{s["element"]}" : s["x"] != null ? $" at {s["x"]},{s["y"]}" : "";
+        return a switch
+        {
+            "screenshot" => "Looking at the screen",
+            "type" => $"Typing “{Clip(s["text"]?.GetValue<string>() ?? "", 50)}”",
+            "key" => $"Pressing {s["keys"]}",
+            "scroll" => $"Scrolling {s["direction"]}",
+            "drag" => $"Dragging{xy} → {s["x2"]},{s["y2"]}",
+            "wait" => $"Waiting {s["seconds"] ?? 1}s",
+            "zoom" => "Zooming in",
+            _ => $"{char.ToUpper(a[0])}{a[1..].Replace('_', ' ')}{xy}",
+        };
+    }
+
+    static string Clip(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+
+    public static async Task<JsonNode> Run(JsonNode input, Func<string, bool> confirm, CancellationToken ct)
+    {
+        var steps = ArrayOf(input["steps"]) ?? new JsonArray { new JsonObject { ["action"] = "screenshot" } };
+        var key = input.ToJsonString();
+        repeats = key == lastInput ? repeats + 1 : 0;
+        lastInput = key;
+        if (NeedsApproval(input, steps) is string why)
+        {
+            if (!confirm(why)) return JsonValue.Create("User declined. Don't retry this; ask them what they'd like instead.")!;
+            await Task.Delay(250, ct); // let the panel slide out of the way again (its close animation is 150 ms)
+        }
+
+        bool acted = false;
+        for (int i = 0; i < steps.Count; i++)
+        {
+            var step = steps[i]!;
+            int n = i + 1;
+            string action = step["action"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: missing 'action'");
+            int I(string k) => Num(step[k]) ?? throw new ArgumentException($"step {n} ('{action}') needs '{k}' as a number");
+            Point P(string kx, string ky)
+            {
+                if (kx == "x" && step["name"] is JsonNode label)
+                    return UiTree.FindByName(label.GetValue<string>());
+                if (kx == "x" && step["element"] is JsonNode el)
+                    return UiTree.TryGetElement(Num(el) ?? -1, out var c) ? c
+                        : throw new ArgumentException($"step {n}: no element {el} in the last ui list; look again");
+                return ToScreen(I(kx), I(ky));
+            }
+            if (acted && action != "wait") await Task.Delay(80, ct); // small gap so apps keep up with a batch
+            // never type or click into Otto's own chat panel (it would send the text as a new request)
+            if (action is not ("screenshot" or "wait" or "zoom" or "move") && FrontIsOtto())
+                throw new InvalidOperationException($"step {n}: the front window is Otto's own panel, not the app you meant. Bring the target window to the front first (window tool 'focus').");
+
+            switch (action)
+            {
+                case "screenshot": continue;
+                case "zoom":
+                    if (acted) await Settle(ct);
+                    return Capture(Rect(P("x", "y"), P("x2", "y2")), mark: false);
+                case "move": MoveTo(P("x", "y")); break;
+                case "click": Click(P("x", "y"), Btn.Left, 1); break;
+                case "double_click": Click(P("x", "y"), Btn.Left, 2); break;
+                case "right_click": Click(P("x", "y"), Btn.Right, 1); break;
+                case "middle_click": Click(P("x", "y"), Btn.Middle, 1); break;
+                case "drag": await Drag(P("x", "y"), P("x2", "y2"), ct); break;
+                case "scroll":
+                    if (step["x"] != null || step["element"] != null || step["name"] != null) MoveTo(P("x", "y"));
+                    Scroll(step["direction"]?.GetValue<string>() ?? "down", Num(step["amount"]) ?? 3);
+                    break;
+                case "type":
+                    await TypeText(step["text"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'type' needs 'text'"), ct);
+                    break;
+                case "key":
+                    PressCombo(step["keys"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'key' needs 'keys'"));
+                    break;
+                case "wait":
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(step["seconds"]?.GetValue<double>() ?? 1, 0.1, 10)), ct);
+                    continue;
+                default: throw new ArgumentException($"step {n}: unknown action {action}");
+            }
+            acted = true;
+        }
+
+        if (acted) await Settle(ct);
+        var seen = Observe(input["observe"]?.GetValue<string>() ?? "ui", ct);
+        if (repeats >= 2 && seen is JsonValue v && v.ToString().StartsWith(Unchanged))
+            return JsonValue.Create(v + " You've made this exact call 3 times with no effect. Try something different: a keyboard shortcut, another control, a screenshot, or escalate.")!;
+        return seen;
+    }
+
+    /// Wait until the screen stops changing instead of a fixed pause: instant apps return in ~0.2 s,
+    /// slow ones (a page loading, a window opening) get up to 1.5 s, so it's both faster and more reliable.
+    static async Task Settle(CancellationToken ct)
+    {
+        await Task.Delay(80, ct);
+        var prev = Thumbnail();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 1_400)
+        {
+            await Task.Delay(80, ct);
+            var cur = Thumbnail();
+            if (Difference(cur, prev) < 0.4) return;
+            prev = cur;
+        }
+    }
+
+    public static string Bench()
+    {
+        string T(string label, Action a, int n = 5)
+        {
+            a();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 0; i < n; i++) a();
+            return $"{label}: {sw.Elapsed.TotalMilliseconds / n:0} ms\n";
+        }
+        return T("change check (thumbnail)", () => Thumbnail())
+             + T("settle when screen is still", () => Settle(CancellationToken.None).Wait(), 3)
+             + T("screenshot 1024px jpeg", () => Capture(Screen, mark: true))
+             + T("read front window as text", () => UiTree.Describe(ToShot, CancellationToken.None), 3);
+    }
+
+    static bool FrontIsOtto()
+    {
+        GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
+        try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName is var n && (n.Equals("Otto", StringComparison.OrdinalIgnoreCase) || n.Equals("Jarvis", StringComparison.OrdinalIgnoreCase)); }
+        catch { return false; }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+
+    static int? Num(JsonNode? n)
+    {
+        if (n is not JsonValue v) return null;
+        if (v.TryGetValue<int>(out var i)) return i;
+        if (v.TryGetValue<double>(out var d)) return (int)Math.Round(d);
+        if (v.TryGetValue<string>(out var s) && double.TryParse(s, out d)) return (int)Math.Round(d);
+        return null;
+    }
+
+    const string Unchanged = "Nothing changed";
+    static string? lastInput, lastUi;
+    static byte[]? lastThumb;
+    static int repeats, looks, lastUiAt, lastThumbAt;
+
+    /// Called at the start of each user turn: earlier observations may no longer be in the history.
+    public static void NewTurn() { lastInput = lastUi = null; lastThumb = null; repeats = 0; }
+
+    // "Nothing changed" is only safe if that earlier reading is still in the model's history; the agent keeps
+    // the 2 newest in full, so only compare against one from the last two looks.
+    static bool Recent(int at) => looks - at <= 1;
+
+    /// What the model gets back. If the screen is the same as its last look (still in its history),
+    /// a one-line note replaces the whole list or image.
+    static JsonNode Observe(string observe, CancellationToken ct)
+    {
+        if (observe == "none") return JsonValue.Create("Done.")!;
+        looks++;
+        if (observe == "ui")
+        {
+            var (text, count) = UiTree.Describe(ToShot, ct);
+            if (count >= 3)
+            {
+                if (text == lastUi && Recent(lastUiAt)) return JsonValue.Create($"{Unchanged}: the front window's controls are exactly as in your last look.")!;
+                lastUi = text;
+                lastUiAt = looks;
+                return JsonValue.Create(text)!;
+            }
+            // canvases, games and some old apps expose nothing useful: show the picture instead
+            var shot = ScreenshotUnlessSame();
+            if (shot is JsonArray arr) arr.Insert(0, new JsonObject { ["type"] = "text", ["text"] = text + "(Few readable controls here, so here's a screenshot.)" });
+            return shot;
+        }
+        return ScreenshotUnlessSame();
+    }
+
+    static JsonNode ScreenshotUnlessSame()
+    {
+        var thumb = Thumbnail();
+        if (lastThumb != null && Recent(lastThumbAt) && Difference(thumb, lastThumb) < 0.6)
+            return JsonValue.Create($"{Unchanged}: the screen looks the same as your last screenshot.")!;
+        lastThumb = thumb;
+        lastThumbAt = looks;
+        return Capture(Screen, mark: true);
+    }
+
+    /// 96x54 greyscale copy of the screen: enough to tell "something happened" from "nothing did".
+    static byte[] Thumbnail()
+    {
+        var b = Screen;
+        using var full = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb);
+        try { using var g = Graphics.FromImage(full); g.CopyFromScreen(b.Location, Point.Empty, b.Size); }
+        catch (System.ComponentModel.Win32Exception) { return Array.Empty<byte>(); } // secure desktop (UAC, lock screen)
+        using var small = new Bitmap(96, 54, PixelFormat.Format24bppRgb);
+        using (var g = Graphics.FromImage(small))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear; // averages every pixel, so small changes still register
+            g.DrawImage(full, 0, 0, 96, 54);
+        }
+        var px = new byte[96 * 54];
+        var data = small.LockBits(new Rectangle(0, 0, 96, 54), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            var row = new byte[data.Stride];
+            for (int y = 0; y < 54; y++)
+            {
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0 + y * data.Stride, row, 0, data.Stride);
+                for (int x = 0; x < 96; x++) // BGR
+                    px[y * 96 + x] = (byte)((row[x * 3 + 2] * 3 + row[x * 3 + 1] * 6 + row[x * 3]) / 10);
+            }
+        }
+        finally { small.UnlockBits(data); }
+        return px;
+    }
+
+    /// Mean absolute difference, but a small change (a ticked box, a new dialog) must still count,
+    /// so any single cell moving a lot also makes it "different".
+    static double Difference(byte[] a, byte[] b)
+    {
+        if (a.Length == 0 || a.Length != b.Length) return 99;
+        double sum = 0;
+        for (int i = 0; i < a.Length; i++)
+        {
+            int d = Math.Abs(a[i] - b[i]);
+            if (d > 24) return 99;
+            sum += d;
+        }
+        return sum / a.Length;
+    }
+
+    static Point ToShot(Point p) =>
+        new((int)Math.Round((p.X - Screen.X) * Scale), (int)Math.Round((p.Y - Screen.Y) * Scale));
+
+    /// The model flags consequential steps itself. The only hard backstop is permanent delete,
+    /// which skips the Recycle Bin and can't be undone.
+    static string? NeedsApproval(JsonNode input, JsonArray steps)
+    {
+        if (input["confirm"]?.GetValue<string>() is string said && said.Trim().Length > 0)
+            return said.Trim();
+        foreach (var s in steps)
+        {
+            var combo = (s?["keys"]?.GetValue<string>() ?? "").Replace(" ", "").ToLowerInvariant();
+            if (combo is "shift+delete" or "shift+del") return "Permanently delete the selected item (skips the Recycle Bin)?";
+        }
+        return null;
+    }
+
+    static Rectangle Rect(Point a, Point b) =>
+        Rectangle.FromLTRB(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X) + 1, Math.Max(a.Y, b.Y) + 1);
+
+    static Point ToScreen(int x, int y)
+    {
+        var s = ShotSize;
+        if (x < 0 || y < 0 || x >= s.Width || y >= s.Height)
+            throw new ArgumentException($"{x},{y} is off the {s.Width}x{s.Height} screenshot.");
+        return new Point(Screen.X + (int)Math.Round(x / Scale), Screen.Y + (int)Math.Round(y / Scale));
+    }
+
+    /// Grab part of the screen, shrunk to at most ShotWidth wide. The overlay is excluded from capture.
+    static JsonArray Capture(Rectangle area, bool mark)
+    {
+        using var full = new Bitmap(area.Width, area.Height, PixelFormat.Format24bppRgb);
+        try { using var g = Graphics.FromImage(full); g.CopyFromScreen(area.Location, Point.Empty, area.Size); }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            throw new InvalidOperationException("Can't see the screen right now: a Windows security prompt (UAC) or the lock screen is up. Ask the user to deal with it.");
+        }
+
+        double k = Math.Min(1.0, ShotWidth / (double)area.Width);
+        var size = new Size(Math.Max(1, (int)Math.Round(area.Width * k)), Math.Max(1, (int)Math.Round(area.Height * k)));
+        using var small = new Bitmap(size.Width, size.Height, PixelFormat.Format24bppRgb);
+        using (var g = Graphics.FromImage(small))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(full, 0, 0, size.Width, size.Height);
+            if (mark)
+            {
+                // draw the mouse so the model knows where it is
+                var c = Cursor.Position;
+                float cx = (c.X - area.X) * (float)k, cy = (c.Y - area.Y) * (float)k;
+                using var pen = new Pen(Color.Red, 2);
+                g.DrawEllipse(pen, cx - 6, cy - 6, 12, 12);
+            }
+        }
+
+        using var ms = new MemoryStream();
+        var jpeg = ImageCodecInfo.GetImageEncoders().First(e => e.FormatID == ImageFormat.Jpeg.Guid);
+        var ps = new EncoderParameters(1) { Param = { [0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 75L) } };
+        small.Save(ms, jpeg, ps);
+
+        return new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "image",
+                ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = Convert.ToBase64String(ms.ToArray()) },
+            },
+        };
+    }
+}

@@ -1,0 +1,9 @@
+# build output
+bin/
+obj/
+*.user
+.vs/
+
+# never commit keys or local test files
+*.env
+.env*
