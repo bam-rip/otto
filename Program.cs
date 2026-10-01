@@ -75,6 +75,16 @@ static class Program
             Application.Run();
             return;
         }
+        // Otto.exe --list-models → the current provider's model list (no cost), in %TEMP%\otto-models.txt
+        if (Environment.GetCommandLineArgs().Contains("--list-models"))
+        {
+            var c = Providers.Current();
+            string outp;
+            try { outp = string.Join("\n", Llm.ListModelsAsync(c.Provider, c.BaseUrl, c.Key).GetAwaiter().GetResult()); }
+            catch (Exception e) { outp = "ERROR " + e.Message; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-models.txt"), outp);
+            return;
+        }
         // Otto.exe --settings → just the settings window
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {

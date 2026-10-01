@@ -23,10 +23,10 @@ static class Providers
     {
         new("anthropic", "Anthropic (Claude)", "https://api.anthropic.com/v1", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", true, "https://console.anthropic.com/settings/keys"),
         new("openai", "OpenAI (ChatGPT)", "https://api.openai.com/v1", "gpt-5-mini", "gpt-5", true, "https://platform.openai.com/api-keys"),
-        new("gemini", "Google (Gemini)", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "gemini-2.5-pro", true, "https://aistudio.google.com/apikey"),
+        new("gemini", "Google (Gemini)", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash-latest", "gemini-pro-latest", true, "https://aistudio.google.com/apikey"),
         new("xai", "xAI (Grok)", "https://api.x.ai/v1", "grok-4-fast", "grok-4", true, "https://console.x.ai"),
         new("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", "deepseek-reasoner", false, "https://platform.deepseek.com/api_keys"),
-        new("openrouter", "OpenRouter (many models, one key)", "https://openrouter.ai/api/v1", "google/gemini-2.5-flash", "anthropic/claude-sonnet-4.5", true, "https://openrouter.ai/keys"),
+        new("openrouter", "OpenRouter (many models, one key)", "https://openrouter.ai/api/v1", "google/gemini-flash-latest", "anthropic/claude-sonnet-4.5", true, "https://openrouter.ai/keys"),
         new("custom", "Custom / local (Ollama, LM Studio…)", "http://localhost:11434/v1", "", "", false, ""),
     };
 

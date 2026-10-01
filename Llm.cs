@@ -50,7 +50,7 @@ static class Llm
             ["max_tokens"] = maxTokens,
             // cache tools + system + history so each step of a task re-reads them at ~10% of the price
             ["cache_control"] = new JsonObject { ["type"] = "ephemeral" },
-            ["messages"] = messages,
+            ["messages"] = StripExtras(messages),
         };
         if (system != null)
         {
@@ -141,6 +141,19 @@ static class Llm
         return new JsonObject { ["content"] = content, ["stop_reason"] = stopReason, ["usage"] = usage };
     }
 
+    /// Provider-specific data kept on a tool_use block (e.g. Gemini's thought_signature). Only OpenAI-style
+    /// requests send it back; it's removed before anything goes to Anthropic.
+    const string Extra = "_extra";
+
+    static JsonArray StripExtras(JsonArray messages)
+    {
+        foreach (var m in messages)
+            if (m?["content"] is JsonArray blocks)
+                foreach (var b in blocks)
+                    if (b is JsonObject o) o.Remove(Extra);
+        return messages;
+    }
+
     // ---------------- OpenAI-style (OpenAI, Gemini, Grok, DeepSeek, OpenRouter, local) ----------------
 
     static async Task<JsonNode> OpenAiAsync(AiConfig cfg, string model, string? system, JsonArray? tools,
@@ -183,6 +196,7 @@ static class Llm
         using var res = await SendWithRetry(Make, ct);
         var text = new StringBuilder();
         var calls = new SortedDictionary<int, (string id, string name, StringBuilder args)>();
+        var extras = new Dictionary<int, JsonNode>();
         string? finish = null;
         JsonNode? usage = null;
 
@@ -210,6 +224,7 @@ static class Llm
                     if (tc["id"]?.GetValue<string>() is { Length: > 0 } id) cur.id = id;
                     if (tc["function"]?["name"]?.GetValue<string>() is { Length: > 0 } nm) cur.name = nm;
                     if (tc["function"]?["arguments"]?.GetValue<string>() is string a) cur.args.Append(a);
+                    if (tc["extra_content"] is JsonNode extra) extras[i] = extra.DeepClone();
                     calls[i] = cur;
                 }
             }
@@ -217,15 +232,18 @@ static class Llm
 
         var content = new JsonArray();
         if (text.Length > 0) content.Add(new JsonObject { ["type"] = "text", ["text"] = text.ToString() });
-        foreach (var (_, call) in calls)
+        foreach (var (i, call) in calls)
         {
-            content.Add(new JsonObject
+            var block = new JsonObject
             {
                 ["type"] = "tool_use",
                 ["id"] = call.id.Length > 0 ? call.id : "call_" + Guid.NewGuid().ToString("N")[..12], // Gemini sometimes omits ids
                 ["name"] = call.name,
                 ["input"] = ParseArgs(call.args.ToString()),
-            });
+            };
+            // Gemini 3 requires its thought_signature to come back with the call in later requests
+            if (extras.TryGetValue(i, out var extra)) block[Extra] = extra;
+            content.Add(block);
         }
         long prompt = usage?["prompt_tokens"]?.GetValue<long>() ?? 0;
         long cached = usage?["prompt_tokens_details"]?["cached_tokens"]?.GetValue<long>() ?? 0;
@@ -257,11 +275,16 @@ static class Llm
             if (role == "assistant")
             {
                 var text = string.Concat(blocks.Where(b => b?["type"]?.GetValue<string>() == "text").Select(b => b!["text"]!.GetValue<string>()));
-                var calls = new JsonArray(blocks.Where(b => b?["type"]?.GetValue<string>() == "tool_use").Select(b => (JsonNode)new JsonObject
+                var calls = new JsonArray(blocks.Where(b => b?["type"]?.GetValue<string>() == "tool_use").Select(b =>
                 {
-                    ["id"] = b!["id"]!.DeepClone(),
-                    ["type"] = "function",
-                    ["function"] = new JsonObject { ["name"] = b["name"]!.DeepClone(), ["arguments"] = b["input"]!.ToJsonString() },
+                    var call = new JsonObject
+                    {
+                        ["id"] = b!["id"]!.DeepClone(),
+                        ["type"] = "function",
+                        ["function"] = new JsonObject { ["name"] = b["name"]!.DeepClone(), ["arguments"] = b["input"]!.ToJsonString() },
+                    };
+                    if (b[Extra] is JsonNode extra) call["extra_content"] = extra.DeepClone();
+                    return (JsonNode)call;
                 }).ToArray());
                 var msg = new JsonObject { ["role"] = "assistant", ["content"] = text.Length > 0 ? text : null };
                 if (calls.Count > 0) msg["tool_calls"] = calls;
@@ -333,7 +356,23 @@ static class Llm
         var data = JsonNode.Parse(text)?["data"]?.AsArray() ?? new JsonArray();
         return data.Select(m => m?["id"]?.GetValue<string>() ?? "").Where(s => s.Length > 0)
                    .Select(s => s.StartsWith("models/") ? s[7..] : s) // Gemini prefixes ids
+                   .Where(IsChatModel)
                    .OrderBy(s => s).ToList();
+    }
+
+    /// Provider model lists include speech, image, video, music and embedding models that can't chat
+    /// (picking one gives errors like "Multiturn chat is not enabled for this model").
+    static readonly string[] NotChat =
+    {
+        "tts", "live", "transcribe", "embedding", "embed", "image", "imagen", "veo", "lyria", "aqa", "audio",
+        "robotics", "nano-banana", "deep-research", "antigravity", "computer-use", "whisper", "dall-e",
+        "moderation", "realtime", "translate", "rerank", "sora", "omni-moderation", "babbage", "davinci",
+    };
+
+    static bool IsChatModel(string id)
+    {
+        var s = id.ToLowerInvariant();
+        return !NotChat.Any(s.Contains);
     }
 
     static JsonNode ParseArgs(string s)
@@ -378,7 +417,10 @@ static class Llm
             var text = await res.Content.ReadAsStringAsync(ct);
             var wait = res.Headers.RetryAfter?.Delta ?? TimeSpan.FromMilliseconds(1500 << attempt);
             res.Dispose();
-            if (attempt < 3 && (code is 429 or 529 || code >= 500))
+            // a used-up quota (daily/free-tier allowance) won't come back in seconds; retrying just wastes attempts
+            bool quotaGone = code == 429 && text.Contains("quota", StringComparison.OrdinalIgnoreCase)
+                             && (text.Contains("billing", StringComparison.OrdinalIgnoreCase) || text.Contains("exceeded your current", StringComparison.OrdinalIgnoreCase));
+            if (attempt < 3 && !quotaGone && (code is 429 or 529 || code >= 500))
             {
                 await Task.Delay(wait > TimeSpan.FromSeconds(20) ? TimeSpan.FromSeconds(20) : wait, ct);
                 continue;
@@ -393,10 +435,9 @@ static class Llm
         try
         {
             var j = JsonNode.Parse(text);
-            // Anthropic: {"error":{"message"}}, OpenAI-style: same or [{"error":...}] (Gemini)
-            msg = j?["error"]?["message"]?.GetValue<string>()
-                  ?? (j as JsonArray)?.FirstOrDefault()?["error"]?["message"]?.GetValue<string>()
-                  ?? text;
+            // Anthropic: {"error":{"message"}}, OpenAI-style: same, Gemini: [{"error":{...}}]
+            var err = j is JsonArray arr ? arr.FirstOrDefault()?["error"] : j?["error"];
+            msg = err?["message"]?.GetValue<string>() ?? text;
         }
         catch { msg = text; }
         if (msg.Length > 300) msg = msg[..300] + "…";
