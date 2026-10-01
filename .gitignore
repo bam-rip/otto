@@ -7,3 +7,6 @@ obj/
 # never commit keys or local test files
 *.env
 .env*
+
+# release downloads (attached to GitHub releases, not committed)
+release/

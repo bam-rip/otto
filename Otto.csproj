@@ -8,6 +8,12 @@
     <AssemblyName>Otto</AssemblyName>
     <RootNamespace>Otto</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Product>Otto</Product>
+    <Company>bam-rip</Company>
+    <Authors>bam-rip</Authors>
+    <Copyright>Copyright (c) 2026 bam-rip</Copyright>
+    <Description>An AI assistant that operates your Windows PC</Description>
+    <Version>1.0.0</Version>
     <ApplicationIcon>assets\otto.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

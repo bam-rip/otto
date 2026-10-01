@@ -6,6 +6,8 @@
 
 It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from the right, like the Windows 10 Action Center. Ask for something and Otto does it. While it's working, a soft glow around the screen shows that it has the mouse and keyboard.
 
+![Otto's panel: the start screen, and a quick answer about free disk space](assets/screenshot.png)
+
 > **Read the [safety notes](#safety) before you use it.** Otto can control your computer with very few restrictions. That's the point of it, but it's also the risk.
 
 ## What it can do
@@ -25,18 +27,22 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 ## Requirements
 
 - Windows 10 (version 2004 or later) or Windows 11
-- The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), to build it
 - An API key from one of the providers above. Claude works best: https://console.anthropic.com/settings/keys
 
 ## Install
 
-1. Download or clone this repository.
-2. Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto`, adds Start menu and desktop shortcuts, and sets it to start with Windows.
-3. On first start, Otto opens its settings. Choose a provider and paste your API key. The key is stored in Windows Credential Manager, never in a file.
+**The easy way (no programming tools needed):**
 
-Run `Install Otto.cmd` again any time to update after changing the code. **`Uninstall Otto.cmd`** removes Otto again. It keeps your notes and keys unless you run `uninstall.ps1 -All`.
+1. Download `Otto-x.y.z.zip` from the [latest release](../../releases/latest) and unzip it.
+2. Move `Otto.exe` somewhere permanent, for example `C:\Users\<you>\Otto\`, then double-click it.
+3. Otto opens its settings on first start. Choose an AI provider and paste your API key. The key is stored in Windows Credential Manager, never in a file.
+4. If you want it to start with Windows, right-click Otto's tray icon and tick **Start with Windows**.
 
-Windows SmartScreen or your antivirus may warn about it the first time. The program isn't signed, and software that sends keystrokes and runs PowerShell looks suspicious to them. You're building it yourself from this source, so you can read exactly what it does.
+Windows SmartScreen may say it "protected your PC" because the program isn't signed. Click **More info → Run anyway**. Some antivirus products may also be wary of a program that sends keystrokes and runs PowerShell. The full source is here, so you can check what it does.
+
+**From source (for developers):**
+
+You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto` with Start menu and desktop shortcuts, and sets it to start with Windows. Run it again after changing the code. **`Uninstall Otto.cmd`** removes it again; it keeps your notes and keys unless you run `uninstall.ps1 -All`. `publish.ps1` builds the release download.
 
 ## Using it
 
@@ -119,4 +125,4 @@ Otto.exe --settings                                      # just the settings win
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Made by [bam-rip](https://github.com/bam-rip). MIT licensed, see [LICENSE](LICENSE).
