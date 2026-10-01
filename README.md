@@ -15,7 +15,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **See and control the screen.** It reads windows through Windows' accessibility interface (cheap and accurate), and uses screenshots when it needs to see something visual. It can click, type, drag, scroll and press shortcuts.
 - **Work with your apps and files.** It can open any installed app by name, manage windows, read and write files (including `.docx`), and run PowerShell.
 - **Use the web.** It searches, reads pages, and works inside your normal browser.
-- **Email and calendar** for Outlook, Hotmail and Microsoft 365: list, read, draft and send email (always with your approval), and check or add calendar events.
+- **Email and calendar** (experimental) for Outlook, Hotmail and Microsoft 365: list, read, draft and send email (always with your approval), and check or add calendar events.
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
 - **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
 - **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.
@@ -74,9 +74,11 @@ Please take these seriously:
 
 ## Costs
 
-You pay your AI provider directly. With the default Claude setup (Haiku for everyday steps, Sonnet only when a task is hard), typical tasks cost about **1 to 3 US cents**. The panel shows a running total for each chat. Otto keeps costs down by reading the screen as text instead of pictures where it can, batching actions, caching, trimming old screen readings, and replaying saved routines without the AI.
+You pay your AI provider directly. With the default Claude setup (Haiku for everyday steps, Sonnet only when a task is hard), typical tasks cost **a few US cents**. The panel shows a running total for each chat. Otto keeps costs down by reading the screen as text instead of pictures where it can, batching actions, caching, trimming old screen readings, and replaying saved routines without the AI.
 
 ## Email and calendar setup (Outlook / Hotmail)
+
+This feature is experimental and hasn't been fully tested yet.
 
 Microsoft requires every app that reads Outlook mail to register itself once. It's free and takes about 5 minutes:
 
@@ -116,7 +118,7 @@ It's plain C# / WinForms on .NET 8, with no UI framework. Some useful entry poin
 
 Debug switches (none of them use API credits, except `--api-test`):
 
-```bash
+```powershell
 Otto.exe --api-test "first message || second message"   # headless chat, log in %TEMP%\otto-api-test.txt
 Otto.exe --dump-ui                                       # what Otto "sees" of the front window
 Otto.exe --bench                                         # timings of the local work per step
