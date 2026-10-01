@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Otto;
@@ -9,7 +8,7 @@ namespace Otto;
 static class ChatStore
 {
     const int Keep = 100; // oldest chats beyond this are removed
-    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto", "chats");
+    static string Dir => Path.Combine(Paths.Data, "chats");
 
     public sealed record Summary(string Id, string Title, DateTime When);
 
@@ -71,7 +70,7 @@ static class ChatStore
             if (Agent.TurnText(m!) is string t)
             {
                 t = t.Replace('\n', ' ').Trim();
-                return t.Length > 60 ? t[..60] + "…" : t;
+                return t.Clip(60);
             }
         }
         return "(chat)";
@@ -122,10 +121,6 @@ sealed record Attachment(string Name, string? FilePath, byte[]? Jpeg)
     {
         double k = Math.Min(1.0, 1280.0 / Math.Max(img.Width, img.Height));
         using var small = new Bitmap(img, Math.Max(1, (int)(img.Width * k)), Math.Max(1, (int)(img.Height * k)));
-        using var ms = new MemoryStream();
-        var jpeg = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders().First(e => e.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
-        var ps = new System.Drawing.Imaging.EncoderParameters(1) { Param = { [0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L) } };
-        small.Save(ms, jpeg, ps);
-        return ms.ToArray();
+        return Otto.Jpeg.Encode(small, 85);
     }
 }

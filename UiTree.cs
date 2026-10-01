@@ -9,7 +9,10 @@ namespace Otto;
 /// of a screenshot. Chrome, Edge and Firefox expose web pages this way too.
 static class UiTree
 {
+    /// Appears in every listing (and nowhere else Otto writes), so the agent can tell a listing from other text.
+    internal const string ListingMarker = "\nOther windows: ";
     const int MaxElements = 220;
+    const int UIA_E_ELEMENTNOTAVAILABLE = unchecked((int)0x80040201);
     const int MaxChars = 4_000; // ~1000 tokens; past that a screenshot is cheaper
 
     // ids from the last listing → element centre in real screen pixels
@@ -43,11 +46,11 @@ static class UiTree
     /// Returns the element count too, so callers can fall back to a screenshot for canvases and games.
     public static (string text, int count) Describe(Func<Point, Point> toShot, CancellationToken ct)
     {
-        var hwnd = GetForegroundWindow();
+        var hwnd = Win32.Foreground();
         var sb = new StringBuilder();
-        var title = WindowTitle(hwnd);
-        sb.AppendLine($"Front window: {title}");
-        sb.AppendLine("Other windows: " + string.Join(" | ", OtherWindows(hwnd).Take(12)));
+        var title = Win32.Title(hwnd);
+        sb.AppendLine($"Front window: {(title.Length > 0 ? title : "(desktop)")}");
+        sb.Append(ListingMarker[1..]).AppendLine(string.Join(" | ", OtherWindows(hwnd).Take(12)));
 
         var work = Task.Run(() => CollectFront(hwnd));
         // big web pages can be slow to walk; don't let one hang the agent
@@ -65,8 +68,8 @@ static class UiTree
                 lastIds[++id] = c;
                 var p = toShot(c);
                 var line = new StringBuilder($"[{id}] {Short[type]}");
-                if (name.Length > 0) line.Append($" \"{Clip(name, 80)}\"");
-                if (value.Length > 0 && value != name && type != ControlType.Hyperlink) line.Append($" ={Clip(value, 120)}");
+                if (name.Length > 0) line.Append($" \"{name.Clip(80)}\"");
+                if (value.Length > 0 && value != name && type != ControlType.Hyperlink) line.Append($" ={value.Clip(120)}");
                 line.Append($" @{p.X},{p.Y}");
                 if (sb.Length + line.Length > MaxChars) { sb.AppendLine("…(more; scroll or zoom to see the rest)"); break; }
                 sb.AppendLine(line.ToString());
@@ -99,7 +102,7 @@ static class UiTree
     /// (saved routines) where element numbers and positions would have moved.
     public static Point FindByName(string label)
     {
-        var items = CollectFront(GetForegroundWindow());
+        var items = CollectFront(Win32.Foreground());
         bool Clickable((ControlType t, string, string, Rectangle) i) => i.t != ControlType.Text && i.t != ControlType.Image;
         var hit = items.Where(i => i.Item2.Equals(label, StringComparison.OrdinalIgnoreCase)).OrderByDescending(Clickable).FirstOrDefault();
         if (hit.Item2 == null)
@@ -161,28 +164,27 @@ static class UiTree
                 if (!seen.Add((name, rect.X / 4, rect.Y / 4))) continue; // same label nested twice
                 list.Add((type, name, value, rect));
             }
-            catch (ElementNotAvailableException) { }
+            // the control went away mid-read; UIA reports that either way depending on where it notices
+            catch (Exception ex) when (ex is ElementNotAvailableException || ex is COMException { HResult: UIA_E_ELEMENTNOTAVAILABLE }) { }
         }
         return list;
     }
 
     static string Clean(string? s) => string.IsNullOrWhiteSpace(s) ? "" : string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-    static string Clip(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     /// Visible popup windows: classic menus (#32768), or windows owned by the front one / its process.
     static List<IntPtr> Popups(IntPtr front)
     {
-        GetWindowThreadProcessId(front, out uint frontPid);
+        uint frontPid = Win32.ProcessId(front);
         var list = new List<IntPtr>();
-        EnumWindows((h, _) =>
+        Win32.EnumWindows((h, _) =>
         {
-            if (h == front || !IsWindowVisible(h)) return true;
+            if (h == front || !Win32.IsWindowVisible(h)) return true;
             var cls = new StringBuilder(64);
             GetClassName(h, cls, cls.Capacity);
-            GetWindowThreadProcessId(h, out uint pid);
             bool menu = cls.ToString() == "#32768";
-            bool owned = GetWindow(h, 4 /* GW_OWNER */) == front;
-            bool samePopup = pid == frontPid && (GetWindowLong(h, -20 /* GWL_EXSTYLE */) & 0x8 /* WS_EX_TOPMOST */) != 0;
+            bool owned = Win32.GetWindow(h, Win32.GW_OWNER) == front;
+            bool samePopup = Win32.ProcessId(h) == frontPid && (GetWindowLong(h, -20 /* GWL_EXSTYLE */) & 0x8 /* WS_EX_TOPMOST */) != 0;
             if (menu || owned || samePopup) list.Add(h);
             return true;
         }, IntPtr.Zero);
@@ -191,43 +193,12 @@ static class UiTree
 
     static readonly string[] Browsers = { "chrome", "msedge", "firefox", "zen", "brave", "opera", "vivaldi" };
 
-    static bool IsBrowser(IntPtr h)
-    {
-        GetWindowThreadProcessId(h, out uint pid);
-        try { return Browsers.Contains(System.Diagnostics.Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant()); }
-        catch { return false; }
-    }
+    static bool IsBrowser(IntPtr h) => Browsers.Contains(Win32.ProcessName(h));
 
-    static string WindowTitle(IntPtr h)
-    {
-        var sb = new StringBuilder(256);
-        GetWindowText(h, sb, sb.Capacity);
-        return sb.Length > 0 ? sb.ToString() : "(desktop)";
-    }
+    /// Titles of the other open windows, so the model knows what it could switch to.
+    static IEnumerable<string> OtherWindows(IntPtr front) =>
+        Win32.AppWindows().Where(w => w.h != front).Select(w => w.title.Clip(50)).Distinct();
 
-    static IEnumerable<string> OtherWindows(IntPtr front)
-    {
-        var titles = new List<string>();
-        EnumWindows((h, _) =>
-        {
-            if (h != front && IsWindowVisible(h) && GetWindowTextLength(h) > 0 && GetWindow(h, 4 /* GW_OWNER */) == IntPtr.Zero)
-            {
-                var t = WindowTitle(h);
-                if (t is not ("Program Manager" or "Otto") && !titles.Contains(t)) titles.Add(Clip(t, 50));
-            }
-            return true;
-        }, IntPtr.Zero);
-        return titles;
-    }
-
-    delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
 }

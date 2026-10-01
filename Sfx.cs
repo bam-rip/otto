@@ -1,5 +1,4 @@
 using System.Media;
-using Microsoft.Win32;
 
 namespace Otto;
 
@@ -9,9 +8,8 @@ namespace Otto;
 static class Sfx
 {
     const int Rate = 44100;
-    const string Key = @"Software\Otto";
 
-    public static readonly string Folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto", "sounds");
+    static readonly string Folder = Path.Combine(Paths.Data, "sounds");
 
     // all short two-note blips in the style of listen-on/off: rising = good/start, falling = stop/problem
     static readonly byte[] send = Load("send", (698, 0, 50), (1047, 40, 80));
@@ -32,12 +30,6 @@ static class Sfx
         }
         catch { }
         return Build(fallback);
-    }
-
-    public static bool Enabled
-    {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("Sounds") as int? ?? 1) != 0; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("Sounds", value ? 1 : 0); }
     }
 
     public static void Send() => Play(send);
@@ -91,7 +83,7 @@ static class Sfx
 
     static void Play(byte[] wav)
     {
-        if (!Enabled) return;
+        if (!Prefs.Sounds) return;
         try { new SoundPlayer(new MemoryStream(wav)).Play(); } catch { /* no audio device */ }
     }
 

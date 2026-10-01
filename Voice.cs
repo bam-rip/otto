@@ -15,6 +15,9 @@ sealed class Voice : IDisposable
     WinRecognizer? online;
     readonly StringBuilder heard = new();
     TaskCompletionSource? stopped;
+    // 16 kHz 16-bit mono: speech quality, small upload. 32,000 bytes = 1 second of audio.
+    const int SampleRate = 16_000, BytesPerSecond = SampleRate * 2;
+    const int MaxSeconds = 120; // a forgotten mic can't make a huge upload
     WaveInEvent? mic;
     MemoryStream? clip;
     WaveFileWriter? writer;
@@ -74,7 +77,7 @@ sealed class Voice : IDisposable
         if (mode == Mode.Record)
         {
             var wav = StopRecording();
-            if (wav == null || wav.Length < 16_000) return ""; // under half a second: nothing said
+            if (wav == null || wav.Length < BytesPerSecond / 2) return ""; // under half a second: nothing said
             return await Llm.TranscribeAsync(Providers.Current(), wav, ct);
         }
         return "";
@@ -96,13 +99,12 @@ sealed class Voice : IDisposable
     void StartRecording()
     {
         clip = new MemoryStream();
-        var format = new WaveFormat(16000, 16, 1); // speech quality, small upload
+        var format = new WaveFormat(SampleRate, 16, 1);
         writer = new WaveFileWriter(new IgnoreDisposeStream(clip), format);
         mic = new WaveInEvent { WaveFormat = format, BufferMilliseconds = 50 };
         mic.DataAvailable += (_, a) =>
         {
-            // stop at 2 minutes so a forgotten mic can't make a huge upload
-            if (writer != null && writer.Length < 16000 * 2 * 120) writer.Write(a.Buffer, 0, a.BytesRecorded);
+            if (writer != null && writer.Length < BytesPerSecond * MaxSeconds) writer.Write(a.Buffer, 0, a.BytesRecorded);
         };
         mic.StartRecording();
     }

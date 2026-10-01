@@ -305,8 +305,8 @@ sealed class TrayApp : ApplicationContext
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
         startup.Click += (_, _) => { SetStartWithWindows(!startup.Checked); startup.Checked = StartsWithWindows(); };
         m.Items.Add(startup);
-        var sounds = new ToolStripMenuItem("Sounds") { Checked = Sfx.Enabled };
-        sounds.Click += (_, _) => { Sfx.Enabled = !sounds.Checked; sounds.Checked = Sfx.Enabled; };
+        var sounds = new ToolStripMenuItem("Sounds") { Checked = Prefs.Sounds };
+        sounds.Click += (_, _) => { Prefs.Sounds = !sounds.Checked; sounds.Checked = Prefs.Sounds; };
         m.Items.Add(sounds);
         updateItem = new ToolStripMenuItem("Update") { Visible = false };
         updateItem.Click += (_, _) => InstallUpdate();
@@ -324,8 +324,6 @@ sealed class TrayApp : ApplicationContext
         m.Items.Add("Quit", null, (_, _) => ExitThread());
         return m;
     }
-
-    static string Shorten(string s) => s.Length <= 200 ? s : s[..200] + "…";
 
     async void Run(string text)
     {
@@ -345,7 +343,7 @@ sealed class TrayApp : ApplicationContext
             if (Prefs.ReadAloud && lastReply != null) Speaker.Say(lastReply);
             // the panel auto-hides when you click away, so tell you when the job's done
             if (!panel.Visible)
-                tray.ShowBalloonTip(5000, "Otto is done", Shorten(lastReply ?? "Finished."), ToolTipIcon.None);
+                tray.ShowBalloonTip(5000, "Otto is done", (lastReply ?? "Finished.").Clip(200), ToolTipIcon.None);
         }
         catch (OperationCanceledException) { panel.AddSystem("Stopped."); }
         catch (Exception e) { panel.AddSystem("Error: " + e.Message); Sfx.Error(); }

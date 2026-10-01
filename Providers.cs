@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Microsoft.Win32;
 
 namespace Otto;
@@ -11,6 +10,9 @@ sealed record Provider(string Id, string Label, string BaseUrl, string Fast, str
     public bool NeedsKey => Id != "custom";
     /// Credential Manager entry. Anthropic keeps the original "Otto" entry so existing installs keep working.
     public string KeyTarget => IsAnthropic ? "Otto" : "Otto:" + Id;
+    /// An environment variable that overrides the saved key (developer convenience; Claude only).
+    public string? KeyEnvVar => IsAnthropic ? "ANTHROPIC_API_KEY" : null;
+    public string? SavedKey() => KeyStore.ApiKey(KeyTarget, KeyEnvVar);
 }
 
 /// The settings in effect for one request.
@@ -60,7 +62,7 @@ static class Providers
             Get(p, "fast", p.Fast),
             Get(p, "smart", p.Smart),
             Get(p, "vision", p.Vision ? "1" : "0") == "1",
-            KeyStore.ApiKey(p.KeyTarget, envFallback: p.IsAnthropic ? "ANTHROPIC_API_KEY" : null));
+            p.SavedKey());
     }
 
     /// Ready to send a request? Returns what's missing, or null.
@@ -175,13 +177,19 @@ static class SettingsWindow
             if (MessageBox.Show(f, steps, "Getting a client ID", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) == DialogResult.OK)
                 Tools.OpenUrl("https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade");
         };
-        signIn.Click += (_, _) =>
+        signIn.Click += async (_, _) =>
         {
             if (Graph.SignedIn) { Graph.SignOut(); MailState(); return; }
             Graph.ClientId = clientId.Text;
-            var who = GraphSignIn.Show(f, out var error);
-            MailState();
-            if (who == null && error != null) mailStatus.Text = "Couldn't sign in: " + error;
+            signIn.Enabled = false; // one sign-in at a time
+            try
+            {
+                var (who, error) = await GraphSignIn.ShowAsync(f);
+                if (f.IsDisposed) return;
+                MailState();
+                if (who == null && error != null) mailStatus.Text = "Couldn't sign in: " + error;
+            }
+            finally { if (!signIn.IsDisposed) signIn.Enabled = true; }
         };
 
         // ---- chat panel ----
@@ -199,7 +207,7 @@ static class SettingsWindow
 
         Add(Heading("Updates"));
         grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
-        var updates = new CheckBox { Text = "Check for updates once a day", AutoSize = true, Checked = Updater.Enabled };
+        var updates = new CheckBox { Text = "Check for updates once a day", AutoSize = true, Checked = Prefs.CheckUpdates };
         Add(updates);
         Add(Hint($"You have Otto {Updater.Current}. New versions show as a small bar in the panel; nothing installs without your click."));
 
@@ -215,7 +223,7 @@ static class SettingsWindow
         void Fill()
         {
             var p = P();
-            bool hasKey = KeyStore.ApiKey(p.KeyTarget, p.IsAnthropic ? "ANTHROPIC_API_KEY" : null) != null;
+            bool hasKey = p.SavedKey() != null;
             key.Text = "";
             key.PlaceholderText = hasKey ? "Saved. Leave blank to keep it." : p.NeedsKey ? "Paste your key" : "Optional for local servers";
             getKey.Visible = p.KeyUrl.Length > 0;
@@ -235,7 +243,7 @@ static class SettingsWindow
         load.Click += async (_, _) =>
         {
             var p = P();
-            var k = key.Text.Trim().Length > 0 ? key.Text.Trim() : KeyStore.ApiKey(p.KeyTarget, p.IsAnthropic ? "ANTHROPIC_API_KEY" : null);
+            var k = key.Text.Trim().Length > 0 ? key.Text.Trim() : p.SavedKey();
             status.Text = "Loading…";
             try
             {
@@ -245,7 +253,7 @@ static class SettingsWindow
                 smart.Items.AddRange(list.Cast<object>().ToArray());
                 status.Text = $"{list.Count} models. Pick from the dropdowns.";
             }
-            catch (Exception e) { status.Text = "Couldn't load: " + (e.Message.Length > 60 ? e.Message[..60] + "…" : e.Message); }
+            catch (Exception e) { status.Text = "Couldn't load: " + e.Message.Clip(60); }
         };
 
         if (f.ShowDialog() != DialogResult.OK) return;
@@ -257,32 +265,32 @@ static class SettingsWindow
         Providers.Set(chosen, "smart", smart.Text.Trim().Length > 0 ? smart.Text.Trim() : fast.Text.Trim());
         Providers.Set(chosen, "vision", vision.Checked ? "1" : "0");
         Prefs.AnimateReplies = animate.Checked;
-        Updater.Enabled = updates.Checked;
+        Prefs.CheckUpdates = updates.Checked;
         Prefs.ReadAloud = readAloud.Checked;
         Prefs.VoiceAutoSend = autoSend.Checked;
     }
 }
 
-/// Small UI preferences, in HKCU\Software\Otto next to the Sounds switch.
+/// On/off preferences, as DWORDs in HKCU\Software\Otto (value names kept from earlier versions).
 static class Prefs
 {
     const string Key = @"Software\Otto";
 
-    public static bool AnimateReplies
+    public static bool AnimateReplies { get => Get("AnimateReplies", true); set => Set("AnimateReplies", value); }
+    public static bool VoiceAutoSend { get => Get("VoiceAutoSend", false); set => Set("VoiceAutoSend", value); }
+    public static bool ReadAloud { get => Get("ReadAloud", false); set => Set("ReadAloud", value); }
+    public static bool Sounds { get => Get("Sounds", true); set => Set("Sounds", value); }
+    public static bool CheckUpdates { get => Get("CheckUpdates", true); set => Set("CheckUpdates", value); }
+
+    static bool Get(string name, bool fallback)
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("AnimateReplies") as int? ?? 1) != 0; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("AnimateReplies", value ? 1 : 0); }
+        using var k = Registry.CurrentUser.OpenSubKey(Key);
+        return k?.GetValue(name) is int v ? v != 0 : fallback;
     }
 
-    public static bool VoiceAutoSend
+    static void Set(string name, bool on)
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("VoiceAutoSend") as int? ?? 0) != 0; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("VoiceAutoSend", value ? 1 : 0); }
-    }
-
-    public static bool ReadAloud
-    {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Key); return (k?.GetValue("ReadAloud") as int? ?? 0) != 0; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Key); k.SetValue("ReadAloud", value ? 1 : 0); }
+        using var k = Registry.CurrentUser.CreateSubKey(Key);
+        k.SetValue(name, on ? 1 : 0);
     }
 }

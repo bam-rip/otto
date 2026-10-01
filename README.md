@@ -43,7 +43,7 @@ Windows SmartScreen may say it "protected your PC" because the program isn't sig
 
 **From source (for developers):**
 
-You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto` with Start menu and desktop shortcuts, and sets it to start with Windows. Run it again after changing the code. **`Uninstall Otto.cmd`** removes it again; it keeps your notes and keys unless you run `uninstall.ps1 -All`. `publish.ps1` builds the release download. Bump `<Version>` in `Otto.csproj` before publishing a new release, so installed copies see it as newer.
+You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Double-click **`Install Otto.cmd`**. It builds Otto, installs it to `%LOCALAPPDATA%\Programs\Otto` with Start menu and desktop shortcuts, and sets it to start with Windows. Run it again after changing the code. **`Uninstall Otto.cmd`** removes it again; it keeps your notes and keys unless you run `uninstall.ps1 -All`. `publish.ps1` builds the release download. Bump `<Version>` in `Otto.csproj` before publishing a new release, so installed copies see it as newer. `dotnet test tests/Otto.Tests` runs the unit tests (no API calls; they write only to a temp folder).
 
 ## Using it
 

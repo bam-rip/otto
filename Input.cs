@@ -119,7 +119,7 @@ static partial class Desktop
         Keys.Up, Keys.Down, Keys.Left, Keys.Right, Keys.LWin, Keys.Apps,
     };
 
-    static Keys Parse(string k)
+    internal static Keys Parse(string k)
     {
         k = k.Trim();
         if (Named.TryGetValue(k, out var named)) return named;

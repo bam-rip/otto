@@ -14,7 +14,7 @@ static class Tools
     static readonly HttpClient Http = CreateHttp();
     /// Only commands that destroy data, change how Windows itself works, or run code fetched from the internet
     /// need a yes. Reading, creating, downloading, installing from official repos, closing apps etc. just run.
-    static readonly Regex RiskyCommand = new(
+    internal static readonly Regex RiskyCommand = new(
         @"\b(Remove-Item|ri|rm|rmdir|del|erase|rd|Clear-Content|Clear-RecycleBin|Format-Volume|Clear-Disk|Initialize-Disk|diskpart|bcdedit|" +
         @"Stop-Computer|Restart-Computer|shutdown|Set-ExecutionPolicy|Uninstall-\w+|Remove-AppxPackage|Disable-ComputerRestore|" +
         @"Set-MpPreference|Add-MpPreference|takeown|icacls|cipher|vssadmin|wbadmin|Invoke-Expression|iex|sdelete)\b" +
@@ -63,7 +63,8 @@ static class Tools
     ]
     """;
 
-    static string S(JsonNode input, string key) =>
+    /// A required string argument of a tool call.
+    internal static string S(JsonNode input, string key) =>
         input[key]?.GetValue<string>() ?? throw new ArgumentException($"missing '{key}'");
 
     public static string Describe(string name, JsonNode input) => Graph.Handles(name) ? Graph.Describe(name, input) : name switch
@@ -140,12 +141,14 @@ static class Tools
 
     public static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 
-    static string Backup(string path)
+    internal static string Backup(string path)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto", "backups");
+        var dir = Path.Combine(Paths.Data, "backups");
         Directory.CreateDirectory(dir);
-        var dest = Path.Combine(dir, $"{DateTime.Now:yyyyMMdd-HHmmss}-{Path.GetFileName(path)}");
-        File.Copy(path, dest, overwrite: true);
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+        var dest = Path.Combine(dir, $"{stamp}-{Path.GetFileName(path)}");
+        for (int n = 2; File.Exists(dest); n++) dest = Path.Combine(dir, $"{stamp}-{n}-{Path.GetFileName(path)}");
+        File.Copy(path, dest);
         // keep the 200 newest so this can't fill the disk
         foreach (var old in new DirectoryInfo(dir).GetFiles().OrderByDescending(f => f.CreationTimeUtc).Skip(200))
             try { old.Delete(); } catch { }
@@ -168,9 +171,9 @@ static class Tools
             var href = WebUtility.HtmlDecode(links[i].Groups[1].Value);
             var uddg = Regex.Match(href, "[?&]uddg=([^&]+)");
             if (uddg.Success) href = Uri.UnescapeDataString(uddg.Groups[1].Value);
-            sb.AppendLine(StripTags(links[i].Groups[2].Value));
+            sb.AppendLine(Html.StripTags(links[i].Groups[2].Value));
             sb.AppendLine(href);
-            if (i < snippets.Count) sb.AppendLine(StripTags(snippets[i].Groups[1].Value));
+            if (i < snippets.Count) sb.AppendLine(Html.StripTags(snippets[i].Groups[1].Value));
             sb.AppendLine();
         }
         if (sb.Length == 0 && html.Contains("anomaly", StringComparison.OrdinalIgnoreCase))
@@ -188,7 +191,7 @@ static class Tools
             return $"[{(int)res.StatusCode}] {url} is {type} ({res.Content.Headers.ContentLength?.ToString() ?? "unknown"} bytes), not a web page. " +
                    "To get it, download it with run_powershell (Invoke-WebRequest -OutFile) and open it.";
         var body = await ReadCapped(res, 3_000_000, ct);
-        var text = type.Contains("html") || body.TrimStart().StartsWith("<") ? HtmlToText(body) : body;
+        var text = type.Contains("html") || body.TrimStart().StartsWith("<") ? Html.ToText(body) : body;
         if (find != null) text = Relevant(text, find);
         return Truncate($"[{(int)res.StatusCode}] {url}\n\n{text}", PageChars);
     }
@@ -208,7 +211,7 @@ static class Tools
 
     /// Keep only the lines that mention the search words, plus one line either side for context.
     /// A whole article is often 8k chars; the part that answers the question is usually a few hundred.
-    static string Relevant(string text, string find)
+    internal static string Relevant(string text, string find)
     {
         var words = find.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length > 2).ToArray();
         if (words.Length == 0) return text;
@@ -228,17 +231,6 @@ static class Tools
         }
         return sb.ToString();
     }
-
-    static string HtmlToText(string html)
-    {
-        html = Regex.Replace(html, "<(script|style|noscript|svg|head)[^>]*>.*?</\\1>", " ", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, "<(br|/p|/div|/li|/h[1-6]|/tr)[^>]*>", "\n", RegexOptions.IgnoreCase);
-        var text = StripTags(html);
-        text = Regex.Replace(text, "[ \t]+", " ");
-        return Regex.Replace(text, "\\s*\n\\s*", "\n").Trim();
-    }
-
-    static string StripTags(string s) => WebUtility.HtmlDecode(Regex.Replace(s, "<[^>]+>", "")).Trim();
 
     // ---- files ----
 
@@ -263,7 +255,7 @@ static class Tools
             using var zip = ZipFile.OpenRead(path);
             using var reader = new StreamReader(zip.GetEntry("word/document.xml")!.Open());
             var xml = Regex.Replace(reader.ReadToEnd(), "</w:p>", "\n");
-            return Truncate(StripTags(xml));
+            return Truncate(Html.StripTags(xml));
         }
         var info = new FileInfo(path);
         if (info.Length > 20_000_000) return $"{path} is {info.Length / 1_000_000} MB; too big to read whole. Use run_powershell (Get-Content -TotalCount / Select-String) for parts.";
@@ -280,7 +272,7 @@ static class Tools
     /// a script file run the normal way looks like what it is. The file is deleted afterwards.
     static async Task<string> PowerShell(string command, CancellationToken ct)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto", "scripts");
+        var dir = Path.Combine(Paths.Data, "scripts");
         Directory.CreateDirectory(dir);
         var script = Path.Combine(dir, $"task-{Guid.NewGuid():N}.ps1");
         // UTF-8 with BOM so Windows PowerShell 5.1 reads non-English text correctly; UTF-8 output for the same reason

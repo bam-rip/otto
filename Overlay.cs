@@ -9,7 +9,6 @@ namespace Otto;
 class LayeredWindow : Form
 {
     const int WS_EX_LAYERED = 0x80000, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x8000000;
-    const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 
     protected LayeredWindow()
     {
@@ -31,7 +30,7 @@ class LayeredWindow : Form
         }
     }
 
-    protected void HideFromCapture() => SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
+    protected void HideFromCapture() => Win32.ExcludeFromCapture(Handle);
 
     /// Send a new picture (premultiplied ARGB) to the window at its current position.
     protected void Upload(Bitmap bmp, byte alpha)
@@ -66,7 +65,6 @@ class LayeredWindow : Form
     [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx, cy; }
     [StructLayout(LayoutKind.Sequential, Pack = 1)] struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
 
-    [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
     [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
     [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, IntPtr pptDst, IntPtr psize, IntPtr hdcSrc, IntPtr pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
@@ -252,7 +250,7 @@ sealed class ControlOverlay : LayeredWindow
                 return Color.FromArgb(255, abgr & 0xFF, (abgr >> 8) & 0xFF, (abgr >> 16) & 0xFF);
         }
         catch { }
-        return Color.FromArgb(0, 120, 215);
+        return ChatPanel.Accent;
     }
 }
 
@@ -315,6 +313,7 @@ sealed class StopPill : Form
     internal static Rectangle ScreenBounds { get { lock (boundsLock) return screenBounds; } }
     static Rectangle ScreenBoundsBox { set { lock (boundsLock) screenBounds = value; } }
     bool hot;
+    bool wanted; // shown while Otto has control; false once control ends, so a pending Dodge doesn't bring it back
     readonly System.Windows.Forms.Timer back = new() { Interval = 1500 };
 
     const int WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x8000000, WS_EX_TOPMOST = 0x8;
@@ -329,7 +328,7 @@ sealed class StopPill : Form
         BackColor = Color.FromArgb(31, 31, 31);
         DoubleBuffered = true;
         Cursor = Cursors.Hand;
-        back.Tick += (_, _) => { back.Stop(); if (Tag is true) { Visible = true; } };
+        back.Tick += (_, _) => { back.Stop(); if (wanted) Visible = true; };
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -351,14 +350,14 @@ sealed class StopPill : Form
         var size = new Size((int)(84 * dpi), banner.Height);
         Bounds = new Rectangle(screenOrigin.X + banner.Right + (int)(8 * dpi), screenOrigin.Y + banner.Top, size.Width, size.Height);
         ScreenBoundsBox = Bounds;
-        Tag = true;
+        wanted = true;
         Visible = true;
-        SetWindowDisplayAffinity(Handle, 0x11);
+        Win32.ExcludeFromCapture(Handle);
     }
 
     public new void Hide()
     {
-        Tag = false;
+        wanted = false;
         back.Stop();
         Visible = false;
         ScreenBoundsBox = Rectangle.Empty;
@@ -392,5 +391,4 @@ sealed class StopPill : Form
             TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
 }

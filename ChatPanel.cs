@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 
@@ -37,7 +36,7 @@ sealed class ChatPanel : Form
     DateTime slideStart, hiddenAt;
     readonly DateTime epoch = DateTime.Now;
     Point mouse = new(-1, -1);
-    Rectangle rNew, rKey, rHide, rMic, rSend, rBox;
+    Rectangle rNew, rSettings, rHide, rMic, rSend, rBox;
 
     /// Debug: keep the panel open when it loses focus (set by --show).
     public bool Pinned { get; set; }
@@ -56,8 +55,6 @@ sealed class ChatPanel : Form
 
     public void SetUpdate(string? text) => Ui(() => { updateText = text; Relayout(); });
     const string GlyphPin = "\uE718", GlyphPinned = "\uE840", GlyphHistory = "\uE81C", GlyphAttach = "\uE723";
-
-    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
 
     internal int D(int px) => (int)Math.Round(px * DeviceDpi / 96.0);
     internal int G => D(20);
@@ -149,8 +146,8 @@ sealed class ChatPanel : Form
         // header icons: glyphs optically line up with the right gutter
         int iconRight = w - g + D(10);
         rHide = new Rectangle(iconRight - btn, D(16), btn, btn);
-        rKey = new Rectangle(rHide.Left - btn, D(16), btn, btn);
-        rNew = new Rectangle(rKey.Left - btn, D(16), btn, btn);
+        rSettings = new Rectangle(rHide.Left - btn, D(16), btn, btn);
+        rNew = new Rectangle(rSettings.Left - btn, D(16), btn, btn);
         rPin = new Rectangle(rNew.Left - btn, D(16), btn, btn);
         rHistory = new Rectangle(rPin.Left - btn, D(16), btn, btn);
 
@@ -176,7 +173,7 @@ sealed class ChatPanel : Form
 
     /// With acrylic, the background must be painted fully transparent (alpha 0) or it hides the blur:
     /// GDI+ writes real alpha, so Clear(Black) gave an opaque black panel.
-    internal void PaintBackdrop(Graphics g, Point offset) => g.Clear(acrylic ? Color.Transparent : BackColor);
+    internal void PaintBackdrop(Graphics g) => g.Clear(acrylic ? Color.Transparent : BackColor);
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -211,7 +208,7 @@ sealed class ChatPanel : Form
 
     double Seconds => (DateTime.Now - epoch).TotalSeconds;
 
-    protected override void OnPaintBackground(PaintEventArgs e) => PaintBackdrop(e.Graphics, Point.Empty);
+    protected override void OnPaintBackground(PaintEventArgs e) => PaintBackdrop(e.Graphics);
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -266,7 +263,7 @@ sealed class ChatPanel : Form
             TextRenderer.DrawText(g, "\uE711", glyphFont, new Rectangle(rAttach.Right - D(26), rAttach.Y, D(20), rAttach.Height), hot ? Fg : Dim,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
         }
-        DrawGlyph(g, "", rKey, Fg);
+        DrawGlyph(g, "", rSettings, Fg);
         DrawGlyph(g, "", rHide, Fg);
 
         // working line under the header
@@ -343,7 +340,7 @@ sealed class ChatPanel : Form
     protected override void OnMouseMove(MouseEventArgs e)
     {
         mouse = e.Location;
-        bool overButton = rUpdateGo.Contains(mouse) || rUpdateNotes.Contains(mouse) || rUpdateClose.Contains(mouse) || rHistory.Contains(mouse) || rPin.Contains(mouse) || rAttach.Contains(mouse) || rNew.Contains(mouse) || rKey.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
+        bool overButton = rUpdateGo.Contains(mouse) || rUpdateNotes.Contains(mouse) || rUpdateClose.Contains(mouse) || rHistory.Contains(mouse) || rPin.Contains(mouse) || rAttach.Contains(mouse) || rNew.Contains(mouse) || rSettings.Contains(mouse) || rHide.Contains(mouse) || rMic.Contains(mouse) || rSend.Contains(mouse);
         Cursor = overButton ? Cursors.Hand : rBox.Contains(mouse) ? Cursors.IBeam : Cursors.Default;
         Invalidate();
     }
@@ -360,7 +357,7 @@ sealed class ChatPanel : Form
         else if (rPin.Contains(e.Location)) { Pinned = !Pinned; Invalidate(); }
         else if (rAttach.Contains(e.Location)) { attachments.Clear(); Relayout(); }
         else if (rNew.Contains(e.Location)) ClearRequested?.Invoke();
-        else if (rKey.Contains(e.Location)) SettingsRequested?.Invoke();
+        else if (rSettings.Contains(e.Location)) SettingsRequested?.Invoke();
         else if (rHide.Contains(e.Location)) HidePanel();
         else if (rMic.Contains(e.Location)) MicToggled?.Invoke();
         else if (rSend.Contains(e.Location)) { if (busy) StopRequested?.Invoke(); else SendInput(); }
@@ -410,7 +407,7 @@ sealed class ChatPanel : Form
             Kick();
         }
         Activate();
-        SetForegroundWindow(Handle);
+        Win32.SetForegroundWindow(Handle);
         input.Focus();
         BeginInvoke(() => input.Focus()); // after activation settles
     }
@@ -442,7 +439,7 @@ sealed class ChatPanel : Form
     });
 
     /// The panel shows plain text, so drop stray markdown (**bold**, # headings, `code`) instead of showing symbols.
-    static string StripMarkdown(string t)
+    internal static string StripMarkdown(string t)
     {
         t = System.Text.RegularExpressions.Regex.Replace(t, @"(\*\*|__)(.+?)\1", "$2");
         t = System.Text.RegularExpressions.Regex.Replace(t, @"(?m)^#{1,6}\s+", "");

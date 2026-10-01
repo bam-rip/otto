@@ -9,9 +9,9 @@ namespace Otto;
 static class Memory
 {
     const int MaxNotesChars = 3_000; // every char rides along on every request, so keep it tight
-    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto");
-    static readonly string NotesPath = Path.Combine(Dir, "notes.txt");
-    static readonly string RoutinesPath = Path.Combine(Dir, "routines.json");
+    static string Dir => Paths.Data;
+    static string NotesPath => Path.Combine(Dir, "notes.txt");
+    static string RoutinesPath => Path.Combine(Dir, "routines.json");
     static readonly object gate = new();
 
     public static JsonNode ToolDefinitions() => JsonNode.Parse("""
@@ -38,7 +38,9 @@ static class Memory
         lock (gate)
         {
             var notes = File.Exists(NotesPath) ? File.ReadAllText(NotesPath).Trim() : "";
-            var routines = LoadRoutines();
+            JsonObject routines;
+            try { routines = LoadRoutines(); }
+            catch (Exception e) when (e is JsonException or InvalidOperationException or IOException) { routines = new JsonObject(); }
             var s = "";
             if (notes.Length > 0) s += "\nThings you've learned about this PC and user:\n" + notes + "\n";
             if (routines.Count > 0)
@@ -80,26 +82,28 @@ static class Memory
                 steps.Any(s => s?["element"] != null || s?["x"] != null))
                 throw new ArgumentException("element numbers and x,y change between runs; use 'name' to click by label");
         }
+        string note;
         lock (gate)
         {
-            var all = LoadRoutines();
-            all[name] = new JsonObject { ["description"] = input["description"]?.GetValue<string>() ?? "", ["calls"] = calls.DeepClone() };
             Directory.CreateDirectory(Dir);
+            var all = Writable(out note);
+            all[name] = new JsonObject { ["description"] = input["description"]?.GetValue<string>() ?? "", ["calls"] = calls.DeepClone() };
             File.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
-        return $"Saved routine '{name}'.";
+        return $"Saved routine '{name}'.{note}";
     }
 
     public static string Forget(JsonNode input)
     {
         var name = Id(input["name"]?.GetValue<string>());
+        string note;
         lock (gate)
         {
-            var all = LoadRoutines();
-            if (!all.Remove(name)) return $"No routine called '{name}'.";
+            var all = Writable(out note);
+            if (!all.Remove(name)) return $"No routine called '{name}'.{note}";
             File.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
-        return "Deleted.";
+        return "Deleted." + note;
     }
 
     /// Replays a routine with no model calls in between. Only the last computer call reports the screen.
@@ -110,11 +114,7 @@ static class Memory
         lock (gate)
             routine = LoadRoutines()[name]?.AsObject() ?? throw new ArgumentException($"No routine called '{name}'.");
 
-        var json = routine["calls"]!.ToJsonString();
-        if (input["values"] is JsonObject values)
-            foreach (var (k, v) in values)
-                json = json.Replace("{" + k + "}", JsonEncodedText.Encode(v?.ToString() ?? "").ToString());
-        var calls = JsonNode.Parse(json)!.AsArray();
+        var calls = Fill(routine["calls"]!, input["values"] as JsonObject);
 
         JsonNode last = JsonValue.Create("Done.")!;
         for (int i = 0; i < calls.Count; i++)
@@ -145,10 +145,36 @@ static class Memory
         return last;
     }
 
-    static JsonObject LoadRoutines()
+    /// The routine's calls with each {placeholder} replaced by its value. Values are JSON-escaped, so quotes and
+    /// backslashes in them (paths, messages) can't break or inject into the stored calls.
+    internal static JsonArray Fill(JsonNode calls, JsonObject? values)
     {
-        try { return File.Exists(RoutinesPath) ? JsonNode.Parse(File.ReadAllText(RoutinesPath))!.AsObject() : new JsonObject(); }
-        catch { return new JsonObject(); }
+        var json = calls.ToJsonString();
+        if (values != null)
+            foreach (var (k, v) in values)
+                json = json.Replace("{" + k + "}", JsonEncodedText.Encode(v?.ToString() ?? "").ToString());
+        return JsonNode.Parse(json)!.AsArray();
+    }
+
+    /// Throws if the file exists but can't be read or parsed: callers that write must not treat that as
+    /// "no routines" and overwrite it (see Writable).
+    static JsonObject LoadRoutines() =>
+        File.Exists(RoutinesPath) ? JsonNode.Parse(File.ReadAllText(RoutinesPath)) as JsonObject
+            ?? throw new JsonException("routines.json isn't a JSON object") : new JsonObject();
+
+    /// The routines, for changing. A damaged routines.json is moved aside (not lost) and replaced by an empty
+    /// one; 'note' says where it went so the model can tell the user.
+    static JsonObject Writable(out string note)
+    {
+        note = "";
+        try { return LoadRoutines(); }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        {
+            var aside = Path.Combine(Dir, $"routines.damaged-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.Move(RoutinesPath, aside);
+            note = $" (routines.json was damaged, so it was moved to {aside} and a new one started)";
+            return new JsonObject();
+        }
     }
 
     static string Id(string? s) =>

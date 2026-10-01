@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Otto;
 
@@ -10,7 +9,7 @@ static class Apps
 {
     public static async Task<string> Open(string target, CancellationToken ct)
     {
-        var before = GetForegroundWindow();
+        var before = Win32.Foreground();
         var expanded = Environment.ExpandEnvironmentVariables(target.Trim());
         string how;
 
@@ -31,18 +30,18 @@ static class Apps
         while (sw.ElapsedMilliseconds < 6_000)
         {
             await Task.Delay(150, ct);
-            var now = GetForegroundWindow();
-            if (now != before && Title(now).Length > 0 && ProcessName(now) == "openwith")
+            var now = Win32.Foreground();
+            if (now != before && Win32.Title(now).Length > 0 && Win32.ProcessName(now) == "openwith")
             {
                 // Windows' "How do you want to open this?" box: the app isn't installed. Close it instead of
                 // leaving the model to click around in it.
-                PostMessage(now, 0x0010, IntPtr.Zero, IntPtr.Zero);
+                Win32.PostMessage(now, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                 return $"'{target}' isn't installed (Windows asked which app to use, so I closed that box). Install it first, e.g. with winget.";
             }
-            if (now != before && Title(now).Length > 0)
+            if (now != before && Win32.Title(now).Length > 0)
             {
                 await Task.Delay(250, ct); // let it finish drawing
-                return $"Opened {how}. Front window: {Title(GetForegroundWindow())}";
+                return $"Opened {how}. Front window: {Win32.Title(Win32.Foreground())}";
             }
         }
         return $"Opened {how} (no new window came to the front yet; it may still be loading or already open in the background).";
@@ -105,7 +104,7 @@ static class Apps
 
     public static string Window(string action, string? title)
     {
-        var all = TopWindows();
+        var all = Win32.AppWindows();
         if (action == "list")
             return all.Count == 0 ? "No windows open." : string.Join("\n", all.Select(w => (IsIconic(w.h) ? "[minimized] " : "") + w.title));
         if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException($"'{action}' needs a title");
@@ -121,57 +120,20 @@ static class Apps
                 // Windows only lets the active app change focus; a tap of Alt counts as user input and unlocks it
                 keybd_event(0x12, 0, 0, 0);
                 keybd_event(0x12, 0, 2, 0);
-                SetForegroundWindow(match.h);
+                Win32.SetForegroundWindow(match.h);
                 break;
             case "minimize": ShowWindow(match.h, 6); break;
-            case "maximize": ShowWindow(match.h, 3); SetForegroundWindow(match.h); break;
+            case "maximize": ShowWindow(match.h, 3); Win32.SetForegroundWindow(match.h); break;
             case "restore": ShowWindow(match.h, 9); break;
-            case "close": PostMessage(match.h, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero); break;
+            case "close": Win32.PostMessage(match.h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero); break;
             default: throw new ArgumentException($"Unknown window action {action}");
         }
         Thread.Sleep(300);
         return $"{action}: {match.title}";
     }
 
-    static List<(IntPtr h, string title)> TopWindows()
-    {
-        var list = new List<(IntPtr, string)>();
-        EnumWindows((h, _) =>
-        {
-            if (IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero)
-            {
-                var t = Title(h);
-                if (t.Length > 0 && t is not ("Program Manager" or "Otto")) list.Add((h, t));
-            }
-            return true;
-        }, IntPtr.Zero);
-        return list;
-    }
-
-    static string ProcessName(IntPtr h)
-    {
-        GetWindowThreadProcessId(h, out uint pid);
-        try { return Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant(); }
-        catch { return ""; }
-    }
-
-    static string Title(IntPtr h)
-    {
-        var sb = new StringBuilder(256);
-        GetWindowText(h, sb, sb.Capacity);
-        return sb.ToString();
-    }
-
-    delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    const uint WM_CLOSE = 0x0010;
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
-    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, int extra);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
 }

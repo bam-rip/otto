@@ -1,7 +1,5 @@
-using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace Otto;
@@ -164,10 +162,12 @@ static class Graph
                 var folder = input["folder"]?.GetValue<string>() ?? "inbox";
                 int count = Math.Clamp(input["count"]?.GetValue<int>() ?? 10, 1, 25);
                 var q = $"/me/mailFolders/{Uri.EscapeDataString(folder)}/messages?$top={count}&$select=id,from,subject,receivedDateTime,isRead,bodyPreview";
+                // Outlook can't combine $search with $filter/$orderby, so search wins. Unread-only sends no $orderby
+                // (Graph restricts mixing $orderby with $filter on messages); whether its default order is newest
+                // first, as the tool description promises, hasn't been checked against a real mailbox.
                 if (input["search"]?.GetValue<string>() is { Length: > 0 } s) q += "&$search=" + Uri.EscapeDataString($"\"{s.Replace("\"", "")}\"");
-                else if (input["unread_only"]?.GetValue<bool>() != true) q += "&$orderby=receivedDateTime desc";
-                // Outlook can't combine search with filters; unread-only applies to plain listing
                 else if (input["unread_only"]?.GetValue<bool>() == true) q += "&$filter=isRead eq false";
+                else q += "&$orderby=receivedDateTime desc";
                 var list = (await Get(q, ct))["value"]!.AsArray();
                 if (list.Count == 0) return "No emails found.";
                 var sb = new StringBuilder();
@@ -176,7 +176,7 @@ static class Graph
                     var from = m!["from"]?["emailAddress"];
                     sb.AppendLine($"[{m["id"]}]");
                     sb.AppendLine($"  {(m["isRead"]?.GetValue<bool>() == false ? "UNREAD " : "")}{Local(m["receivedDateTime"])} from {from?["name"]} <{from?["address"]}>");
-                    sb.AppendLine($"  {m["subject"]}: {Clip(m["bodyPreview"]?.ToString() ?? "", 140)}");
+                    sb.AppendLine($"  {m["subject"]}: {(m["bodyPreview"]?.ToString() ?? "").Clip(140)}");
                 }
                 return sb.ToString();
             }
@@ -185,9 +185,9 @@ static class Graph
                 var id = Uri.EscapeDataString(S(input, "id"));
                 var m = await Get($"/me/messages/{id}?$select=from,toRecipients,ccRecipients,subject,receivedDateTime,body", ct);
                 _ = Send(HttpMethod.Patch, $"/me/messages/{id}", new JsonObject { ["isRead"] = true }, ct);
-                var body = m["body"]?["contentType"]?.GetValue<string>() == "html" ? HtmlToText(m["body"]!["content"]!.ToString()) : m["body"]?["content"]?.ToString() ?? "";
+                var body = m["body"]?["contentType"]?.GetValue<string>() == "html" ? Html.ToText(m["body"]!["content"]!.ToString(), paragraphs: true) : m["body"]?["content"]?.ToString() ?? "";
                 return $"From: {Addr(m["from"])}\nTo: {Addrs(m["toRecipients"])}\nCc: {Addrs(m["ccRecipients"])}\n" +
-                       $"Date: {Local(m["receivedDateTime"])}\nSubject: {m["subject"]}\n\n{Clip(body, MaxBody)}";
+                       $"Date: {Local(m["receivedDateTime"])}\nSubject: {m["subject"]}\n\n{body.Clip(MaxBody)}";
             }
             case "email_draft":
             {
@@ -200,12 +200,12 @@ static class Graph
                 if (input["reply_to_id"]?.GetValue<string>() is string replyTo)
                 {
                     var orig = await Get($"/me/messages/{Uri.EscapeDataString(replyTo)}?$select=from,subject", ct);
-                    if (!confirm($"Send this reply to {Addr(orig["from"])}?\n\nRe: {orig["subject"]}\n\n{Clip(S(input, "body"), 600)}")) return "User declined.";
+                    if (!confirm($"Send this reply to {Addr(orig["from"])}?\n\nRe: {orig["subject"]}\n\n{S(input, "body").Clip(600)}")) return "User declined.";
                     await Send(HttpMethod.Post, $"/me/messages/{Uri.EscapeDataString(replyTo)}/reply", new JsonObject { ["comment"] = S(input, "body") }, ct);
                     return "Reply sent.";
                 }
                 var msg = Message(input);
-                if (!confirm($"Send this email to {Join(input["to"])}?\n\nSubject: {input["subject"]}\n\n{Clip(S(input, "body"), 600)}")) return "User declined.";
+                if (!confirm($"Send this email to {Join(input["to"])}?\n\nSubject: {input["subject"]}\n\n{S(input, "body").Clip(600)}")) return "User declined.";
                 await Send(HttpMethod.Post, "/me/sendMail", new JsonObject { ["message"] = msg, ["saveToSentItems"] = true }, ct);
                 return "Sent.";
             }
@@ -292,7 +292,7 @@ static class Graph
         {
             string msg;
             try { msg = JsonNode.Parse(text)?["error"]?["message"]?.GetValue<string>() ?? text; } catch { msg = text; }
-            throw new InvalidOperationException($"Outlook said ({(int)res.StatusCode}): {Clip(msg, 300)}");
+            throw new InvalidOperationException($"Outlook said ({(int)res.StatusCode}): {msg.Clip(300)}");
         }
         return text.Length == 0 ? null : JsonNode.Parse(text);
     }
@@ -308,32 +308,23 @@ static class Graph
 
     // ---------------- small helpers ----------------
 
-    static string S(JsonNode input, string key) => input[key]?.GetValue<string>() ?? throw new ArgumentException($"missing '{key}'");
-    static string Clip(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+    static string S(JsonNode input, string key) => Tools.S(input, key);
     static string Addr(JsonNode? r) => r?["emailAddress"] is JsonNode e ? $"{e["name"]} <{e["address"]}>" : "";
     static string Addrs(JsonNode? list) => list is JsonArray a ? string.Join(", ", a.Select(Addr)) : "";
     static string Local(JsonNode? utc) => DateTime.TryParse(utc?.ToString(), out var d) ? d.ToLocalTime().ToString("ddd d MMM h:mm tt") : "";
-
-    static string HtmlToText(string html)
-    {
-        html = Regex.Replace(html, "<(script|style|head)[^>]*>.*?</\\1>", " ", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, "<(br|/p|/div|/li|/tr|/h[1-6])[^>]*>", "\n", RegexOptions.IgnoreCase);
-        var text = WebUtility.HtmlDecode(Regex.Replace(html, "<[^>]+>", ""));
-        text = Regex.Replace(text, "[ \t\u00a0]+", " ");
-        return Regex.Replace(text, "\\s*\n\\s*(\n\\s*)+", "\n\n").Trim();
-    }
 }
 
 /// The "enter this code" window for signing in to Outlook/Hotmail.
 static class GraphSignIn
 {
     /// Returns the signed-in address, or null if cancelled / failed (with the reason in 'error').
-    public static string? Show(IWin32Window owner, out string? error)
+    /// Must be awaited, never blocked on: the sign-in calls resume on the UI thread.
+    public static async Task<(string? who, string? error)> ShowAsync(IWin32Window owner)
     {
-        error = null;
         Graph.DeviceCode code;
-        try { code = Graph.StartSignIn().GetAwaiter().GetResult(); }
-        catch (Exception e) { error = e.Message; return null; }
+        try { code = await Graph.StartSignIn(); }
+        catch (Exception e) { return (null, e.Message); }
+        if (owner is Control { IsDisposed: true }) return (null, null); // settings closed while the code was coming
 
         using var f = new Form
         {
@@ -369,7 +360,6 @@ static class GraphSignIn
         };
         f.FormClosing += (_, _) => cts.Cancel();
         f.ShowDialog(owner);
-        error = failure;
-        return who;
+        return (who, failure);
     }
 }

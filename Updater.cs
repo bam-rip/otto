@@ -20,12 +20,6 @@ static class Updater
     public static Version Current =>
         Assembly.GetExecutingAssembly().GetName().Version is Version v ? new Version(v.Major, v.Minor, Math.Max(0, v.Build)) : new Version(0, 0, 0);
 
-    public static bool Enabled
-    {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Reg); return (k?.GetValue("CheckUpdates") as int? ?? 1) != 0; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Reg); k.SetValue("CheckUpdates", value ? 1 : 0); }
-    }
-
     /// Updates the user said "not now" to (×) stay hidden until an even newer one comes out.
     public static string? Dismissed
     {
@@ -54,7 +48,7 @@ static class Updater
     /// The daily background check. Returns a newer release, or null (also null when off, too soon, or offline).
     public static async Task<Release?> CheckIfDueAsync()
     {
-        if (!Enabled || DateTime.Now - LastCheck < TimeSpan.FromHours(23)) return null;
+        if (!Prefs.CheckUpdates || DateTime.Now - LastCheck < TimeSpan.FromHours(23)) return null;
         try
         {
             var r = await LatestAsync();

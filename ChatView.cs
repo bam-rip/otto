@@ -172,7 +172,7 @@ sealed class ChatView : Control
 
     const int PadX = 12, PadY = 9;
 
-    void Layout(Graphics g)
+    void LayoutItems(Graphics g)
     {
         int y = D(6);
         Item? prev = null;
@@ -249,14 +249,14 @@ sealed class ChatView : Control
 
     // ---------------- painting ----------------
 
-    protected override void OnPaintBackground(PaintEventArgs e) => owner.PaintBackdrop(e.Graphics, Location);
+    protected override void OnPaintBackground(PaintEventArgs e) => owner.PaintBackdrop(e.Graphics);
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        if (dirty) Layout(g);
+        if (dirty) LayoutItems(g);
 
         if (items.Count == 0 && !showTyping) { DrawStart(g); return; }
         suggestionRects.Clear();

@@ -58,7 +58,7 @@ static partial class Desktop
         return a switch
         {
             "screenshot" => "Looking at the screen",
-            "type" => $"Typing “{Clip(s["text"]?.GetValue<string>() ?? "", 50)}”",
+            "type" => $"Typing “{(s["text"]?.GetValue<string>() ?? "").Clip(50)}”",
             "key" => $"Pressing {s["keys"]}",
             "scroll" => $"Scrolling {s["direction"]}",
             "drag" => $"Dragging{xy} → {s["x2"]},{s["y2"]}",
@@ -67,8 +67,6 @@ static partial class Desktop
             _ => $"{char.ToUpper(a[0])}{a[1..].Replace('_', ' ')}{xy}",
         };
     }
-
-    static string Clip(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     public static async Task<JsonNode> Run(JsonNode input, Func<string, bool> confirm, CancellationToken ct)
     {
@@ -108,6 +106,7 @@ static partial class Desktop
                 case "screenshot": continue;
                 case "zoom":
                     if (acted) await Settle(ct);
+                    readings++;
                     return Capture(Rect(P("x", "y"), P("x2", "y2")), mark: false);
                 case "move": MoveTo(P("x", "y")); break;
                 case "click": Click(P("x", "y"), Btn.Left, 1); break;
@@ -171,17 +170,10 @@ static partial class Desktop
              + T("read front window as text", () => UiTree.Describe(ToShot, CancellationToken.None), 3);
     }
 
-    static bool FrontIsOtto()
-    {
-        GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
-        try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName is var n && (n.Equals("Otto", StringComparison.OrdinalIgnoreCase) || n.Equals("Jarvis", StringComparison.OrdinalIgnoreCase)); }
-        catch { return false; }
-    }
+    // any Otto process, not just this one: a headless --api-test run must not type into the user's own panel either
+    static bool FrontIsOtto() => Win32.ProcessName(Win32.Foreground()) == "otto";
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-
-    static int? Num(JsonNode? n)
+    internal static int? Num(JsonNode? n)
     {
         if (n is not JsonValue v) return null;
         if (v.TryGetValue<int>(out var i)) return i;
@@ -190,24 +182,34 @@ static partial class Desktop
         return null;
     }
 
-    const string Unchanged = "Nothing changed";
+    internal const string Unchanged = "Nothing changed";
+
+    /// How many of the newest screen readings the agent keeps in full (Agent.PruneObservations); older ones
+    /// shrink to a stub. "Nothing changed" may only refer to a reading inside that window.
+    internal const int KeptReadings = 2;
+
+    /// A full screen reading: a UiTree listing or anything with a screenshot. Short results ("Done.",
+    /// "Nothing changed: ...", errors) are not readings; they cost little and never replace one.
+    internal static bool IsReading(JsonNode? content) =>
+        content is JsonArray blocks ? blocks.Any(b => b?["type"]?.GetValue<string>() == "image")
+        : content is JsonValue v && v.TryGetValue<string>(out var s) && s.Contains(UiTree.ListingMarker);
+
     static string? lastInput, lastUi;
     static byte[]? lastThumb;
-    static int repeats, looks, lastUiAt, lastThumbAt;
+    // readings: full readings returned this turn, counted the same way the agent counts them (IsReading)
+    static int repeats, readings, lastUiAt, lastThumbAt;
 
     /// Called at the start of each user turn: earlier observations may no longer be in the history.
-    public static void NewTurn() { lastInput = lastUi = null; lastThumb = null; repeats = 0; }
+    public static void NewTurn() { lastInput = lastUi = null; lastThumb = null; repeats = readings = 0; }
 
-    // "Nothing changed" is only safe if that earlier reading is still in the model's history; the agent keeps
-    // the 2 newest in full, so only compare against one from the last two looks.
-    static bool Recent(int at) => looks - at <= 1;
+    // "Nothing changed" is only safe if that earlier reading is still in the model's history.
+    static bool Recent(int at) => readings - at < KeptReadings;
 
     /// What the model gets back. If the screen is the same as its last look (still in its history),
     /// a one-line note replaces the whole list or image.
     static JsonNode Observe(string observe, CancellationToken ct)
     {
         if (observe == "none") return JsonValue.Create("Done.")!;
-        looks++;
         if (observe == "ui")
         {
             var (text, count) = UiTree.Describe(ToShot, ct);
@@ -215,7 +217,7 @@ static partial class Desktop
             {
                 if (text == lastUi && Recent(lastUiAt)) return JsonValue.Create($"{Unchanged}: the front window's controls are exactly as in your last look.")!;
                 lastUi = text;
-                lastUiAt = looks;
+                lastUiAt = ++readings;
                 return JsonValue.Create(text)!;
             }
             // canvases, games and some old apps expose nothing useful: show the picture instead
@@ -232,7 +234,7 @@ static partial class Desktop
         if (lastThumb != null && Recent(lastThumbAt) && Difference(thumb, lastThumb) < 0.6)
             return JsonValue.Create($"{Unchanged}: the screen looks the same as your last screenshot.")!;
         lastThumb = thumb;
-        lastThumbAt = looks;
+        lastThumbAt = ++readings;
         return Capture(Screen, mark: true);
     }
 
@@ -265,8 +267,10 @@ static partial class Desktop
         return px;
     }
 
-    /// Mean absolute difference, but a small change (a ticked box, a new dialog) must still count,
-    /// so any single cell moving a lot also makes it "different".
+    /// Mean absolute difference in grey levels (0-255) per thumbnail cell, but a small change (a ticked box, a
+    /// new dialog) must still count, so any single cell moving more than 24 levels returns 99 ("different").
+    /// The thresholds here and in its callers (0.4 between frames while settling, 0.6 for "same screenshot")
+    /// are hand-tuned values whose origin isn't recorded (UNVALIDATED); a blinking caret or animated ad can exceed them.
     static double Difference(byte[] a, byte[] b)
     {
         if (a.Length == 0 || a.Length != b.Length) return 99;
@@ -335,17 +339,12 @@ static partial class Desktop
             }
         }
 
-        using var ms = new MemoryStream();
-        var jpeg = ImageCodecInfo.GetImageEncoders().First(e => e.FormatID == ImageFormat.Jpeg.Guid);
-        var ps = new EncoderParameters(1) { Param = { [0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 75L) } };
-        small.Save(ms, jpeg, ps);
-
         return new JsonArray
         {
             new JsonObject
             {
                 ["type"] = "image",
-                ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = Convert.ToBase64String(ms.ToArray()) },
+                ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = Convert.ToBase64String(Jpeg.Encode(small, 75)) },
             },
         };
     }

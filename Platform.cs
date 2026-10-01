@@ -1,8 +1,4 @@
-using System.Drawing.Drawing2D;
-using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Speech.Recognition;
-using System.Text;
 
 namespace Otto;
 
@@ -10,7 +6,6 @@ namespace Otto;
 /// "Otto:<provider>" for the others.
 static class KeyStore
 {
-
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct CREDENTIAL
     {

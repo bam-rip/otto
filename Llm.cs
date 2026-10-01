@@ -77,10 +77,7 @@ static class Llm
             {
                 Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
             };
-            req.Headers.Add("x-api-key", cfg.Key ?? throw new InvalidOperationException("No API key set."));
-            req.Headers.Add("anthropic-version", "2023-06-01");
-            var ws = Environment.GetEnvironmentVariable("ANTHROPIC_WORKSPACE_ID");
-            if (!string.IsNullOrEmpty(ws)) req.Headers.Add("anthropic-workspace-id", ws);
+            AnthropicHeaders(req, cfg.Key ?? throw new InvalidOperationException("No API key set."));
             return req;
         }
 
@@ -141,11 +138,19 @@ static class Llm
         return new JsonObject { ["content"] = content, ["stop_reason"] = stopReason, ["usage"] = usage };
     }
 
+    static void AnthropicHeaders(HttpRequestMessage req, string key)
+    {
+        req.Headers.Add("x-api-key", key);
+        req.Headers.Add("anthropic-version", "2023-06-01");
+        var ws = Environment.GetEnvironmentVariable("ANTHROPIC_WORKSPACE_ID");
+        if (!string.IsNullOrEmpty(ws)) req.Headers.Add("anthropic-workspace-id", ws);
+    }
+
     /// Provider-specific data kept on a tool_use block (e.g. Gemini's thought_signature). Only OpenAI-style
     /// requests send it back; it's removed before anything goes to Anthropic.
-    const string Extra = "_extra";
+    internal const string Extra = "_extra";
 
-    static JsonArray StripExtras(JsonArray messages)
+    internal static JsonArray StripExtras(JsonArray messages)
     {
         foreach (var m in messages)
             if (m?["content"] is JsonArray blocks)
@@ -262,7 +267,7 @@ static class Llm
 
     /// Anthropic-format history → OpenAI chat messages. Tool results become "tool" messages; screenshots
     /// can't go inside those, so they follow in a user message (or become a note if the model is text-only).
-    static JsonArray ToOpenAiMessages(string? system, JsonArray messages, bool vision)
+    internal static JsonArray ToOpenAiMessages(string? system, JsonArray messages, bool vision)
     {
         var outp = new JsonArray();
         if (system != null) outp.Add(new JsonObject { ["role"] = "system", ["content"] = system });
@@ -293,7 +298,7 @@ static class Llm
             }
 
             // user turn: tool results and/or plain content
-            var images = new JsonArray();
+            var images = new List<JsonObject>(); // not a JsonArray: a node can only belong to one array
             var userParts = new JsonArray();
             foreach (var b in blocks)
             {
@@ -411,11 +416,7 @@ static class Llm
     public static async Task<List<string>> ListModelsAsync(Provider p, string baseUrl, string? key)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, baseUrl + "/models");
-        if (p.IsAnthropic)
-        {
-            req.Headers.Add("x-api-key", key ?? throw new InvalidOperationException("paste a key first"));
-            req.Headers.Add("anthropic-version", "2023-06-01");
-        }
+        if (p.IsAnthropic) AnthropicHeaders(req, key ?? throw new InvalidOperationException("paste a key first"));
         else if (!string.IsNullOrWhiteSpace(key)) req.Headers.Add("Authorization", "Bearer " + key);
         using var res = await Http.SendAsync(req);
         var text = await res.Content.ReadAsStringAsync();
@@ -442,7 +443,7 @@ static class Llm
         return !NotChat.Any(s.Contains);
     }
 
-    static JsonNode ParseArgs(string s)
+    internal static JsonNode ParseArgs(string s)
     {
         if (string.IsNullOrWhiteSpace(s)) return new JsonObject();
         try { return JsonNode.Parse(s) ?? new JsonObject(); }
@@ -507,7 +508,6 @@ static class Llm
             msg = err?["message"]?.GetValue<string>() ?? text;
         }
         catch { msg = text; }
-        if (msg.Length > 300) msg = msg[..300] + "…";
-        return new Exception($"API {status}: {msg}");
+        return new ApiException(status, msg.Clip(300));
     }
 }

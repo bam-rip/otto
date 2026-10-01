@@ -15,9 +15,11 @@ sealed class Agent
     const int SummariseAbove = 80_000;
     const int KeepTurns = 4; // turns kept word-for-word when summarising
 
+    // Owned by the worker thread while a request runs. The UI thread only touches it between requests
+    // (TrayApp refuses clear/retry/edit/open while one is running); the lock covers Snapshot during saves.
     readonly JsonArray messages = new();
-    bool smart;
-    bool smartBlocked; // the bigger model hit its quota during this request     // on the harder-tasks model right now
+    bool smart; // on the harder-tasks model right now
+    bool smartBlocked; // the bigger model hit its quota during this request
     AiConfig cfg = Providers.Current();
     long lastContext; // tokens the last call read (fresh + cached)
     DateTime lastTurnEnd;
@@ -38,7 +40,11 @@ sealed class Agent
     /// A message you typed (as opposed to tool results, which are also "user" messages to the API).
     public static bool IsTurnStart(JsonNode m) =>
         m["role"]?.GetValue<string>() == "user" &&
-        (m["content"] is JsonValue || m["content"] is JsonArray a && !a.Any(b => b?["type"]?.GetValue<string>() == "tool_result"));
+        (m["content"] is JsonValue v ? !v.ToString().StartsWith(SummaryHeader)
+            : m["content"] is JsonArray a && !a.Any(b => b?["type"]?.GetValue<string>() == "tool_result"));
+
+    /// Starts the user-role message that replaces older turns once a chat gets long (SummariseOlderTurns).
+    internal const string SummaryHeader = "[Summary of our earlier conversation]";
 
     /// What you typed in a turn-start message, without the "[3:41 PM] " time stamp or the attachment note.
     public static string? TurnText(JsonNode m)
@@ -108,15 +114,15 @@ sealed class Agent
         {
             // the time goes in the message, not the system prompt, so the cached prefix stays identical
             messages.Add(new JsonObject { ["role"] = "user", ["content"] = UserContent(userText, attachments) });
-            PruneObservations(keep: 0); // last task's screen readings are stale; don't pay to resend them
+            PruneObservations(messages, keep: 0); // last task's screen readings are stale; don't pay to resend them
             DropOldAttachedImages();
             for (int step = 0; step < MaxSteps; step++)
             {
-                PruneObservations(keep: 2);
+                PruneObservations(messages, keep: Desktop.KeptReadings);
                 if (!smartBlocked && (step == EscalateAfterSteps || errorsInARow >= 2)) smart = true;
                 JsonNode reply;
                 try { reply = await CallAsync(ct); }
-                catch (Exception e) when (smart && cfg.Smart != cfg.Fast && e.Message.StartsWith("API 429"))
+                catch (ApiException e) when (e.Status == 429 && smart && cfg.Smart != cfg.Fast)
                 {
                     // the bigger model's allowance is used up (common on free tiers): carry on with the everyday one
                     smart = false;
@@ -202,13 +208,14 @@ sealed class Agent
         {
             // Keep what happened so Otto remembers the request and how far it got (dropping the turn
             // made it forget everything after a stop), but patch the history so the API still accepts it.
-            KeepInterruptedTurn(startCount, e is OperationCanceledException ? "Stopped by the user." : "Failed: " + e.Message);
+            KeepInterruptedTurn(messages, startCount, e is OperationCanceledException ? "Stopped by the user." : "Failed: " + e.Message);
             throw;
         }
         finally { OnControl(false); lastTurnEnd = DateTime.Now; }
     }
 
-    void KeepInterruptedTurn(int startCount, string why)
+    /// Every tool_use must be followed by its tool_result or the API rejects the whole history.
+    internal static void KeepInterruptedTurn(JsonArray messages, int startCount, string why)
     {
         lock (messages)
         {
@@ -235,7 +242,9 @@ sealed class Agent
     /// so the record of what Otto did stays readable. Pruning waits until they pile up past keep+3,
     /// so the cached prefix changes every few steps rather than every step. Results from other tools
     /// (files read, pages fetched) are left alone: those are what follow-up questions are about.
-    void PruneObservations(int keep)
+    /// Only full readings count (Desktop.IsReading), the same way Desktop counts them, so its
+    /// "Nothing changed since your last look" always points at a reading that is still here.
+    internal static void PruneObservations(JsonArray messages, int keep)
     {
         var screenTools = new HashSet<string>();
         var found = new List<JsonObject>();
@@ -250,7 +259,7 @@ sealed class Agent
                     if (type == "tool_use" && b!["name"]?.GetValue<string>() is "computer" or "run_routine")
                         screenTools.Add(b["id"]!.GetValue<string>());
                     else if (type == "tool_result" && screenTools.Contains(b!["tool_use_id"]!.GetValue<string>())
-                             && !IsStub(b["content"]))
+                             && Desktop.IsReading(b["content"]))
                         found.Add(b.AsObject());
                 }
             }
@@ -264,7 +273,7 @@ sealed class Agent
                     _ => "",
                 };
                 if (first.Length > 120) first = first[..120];
-                r["content"] = (first.StartsWith("Front window") || first.StartsWith(Unchanged) ? first + " " : "") + Stub;
+                r["content"] = (first.StartsWith("Front window") ? first + " " : "") + Stub;
             }
         }
     }
@@ -289,8 +298,6 @@ sealed class Agent
     }
 
     const string Stub = "[older screen reading removed]";
-    const string Unchanged = "Nothing changed";
-    static bool IsStub(JsonNode? c) => c is JsonValue v && v.ToString().EndsWith(Stub);
 
     /// Your message as the API wants it: plain text, or text plus the images you attached. Attached files
     /// are listed by path so Otto can open or read them with its tools.
@@ -330,10 +337,9 @@ sealed class Agent
             lowEffort: smart, animating ? OnStream : null, ct);
     }
 
-    /// Squash everything but the last two turns into a short summary, written by the cheap model.
+    /// Squash everything but the last KeepTurns turns into a short summary, written by the cheap model.
     async Task SummariseOlderTurns(CancellationToken ct)
     {
-        // turns start at user messages whose content is plain text (tool results are arrays)
         var starts = Enumerable.Range(0, messages.Count).Where(i => IsTurnStart(messages[i]!)).ToList();
         if (starts.Count < KeepTurns + 2) return;
         int cut = starts[^KeepTurns];
@@ -350,10 +356,10 @@ sealed class Agent
                 switch (b!["type"]!.GetValue<string>())
                 {
                     case "text": transcript.AppendLine($"{who}: {b["text"]}"); break;
-                    case "tool_use": transcript.AppendLine($"(Otto used {b["name"]}: {Clip(b["input"]!.ToJsonString(), 200)})"); break;
+                    case "tool_use": transcript.AppendLine($"(Otto used {b["name"]}: {b["input"]!.ToJsonString().Clip(200)})"); break;
                     case "tool_result":
                         var c = b["content"] is JsonValue s ? s.ToString() : "(screen)";
-                        transcript.AppendLine($"(result: {Clip(c, 600)})");
+                        transcript.AppendLine($"(result: {c.Clip(600)})");
                         break;
                 }
             }
@@ -377,13 +383,11 @@ sealed class Agent
         {
             for (int i = 0; i < cut; i++) messages.RemoveAt(0);
             // keep user/assistant alternation: summary as a user turn, then a short ack
-            messages.Insert(0, new JsonObject { ["role"] = "user", ["content"] = "[Summary of our earlier conversation]\n" + summary });
+            messages.Insert(0, new JsonObject { ["role"] = "user", ["content"] = SummaryHeader + "\n" + summary });
             messages.Insert(1, new JsonObject { ["role"] = "assistant", ["content"] = "Got it." });
         }
         lastContext = 0;
     }
-
-    static string Clip(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     void Report(JsonNode u, string model)
     {
@@ -392,14 +396,26 @@ sealed class Agent
         OnUsage(cfg.Provider.IsAnthropic ? ClaudeCost(u, model) : null, tokens, N("cache_read_input_tokens"));
     }
 
-    /// Claude list prices per million tokens: input, output, cache write (5 min), cache read.
-    /// Other providers' prices vary too much to keep a table, so those show tokens instead.
-    static double? ClaudeCost(JsonNode u, string model)
+    /// USD per million tokens (input, output) for Claude models whose price is known. Cache writes and reads
+    /// are priced from the input price with Anthropic's multipliers below. Any other model returns null and the
+    /// panel shows a token count instead. Other providers' prices vary too much to keep a table.
+    static readonly Dictionary<string, (double inP, double outP)> ClaudePrices = new()
     {
-        (double inP, double outP)? price = model.Contains("haiku") ? (1.00, 5.00) : model.Contains("sonnet") ? (2.00, 10.00) : null;
-        if (price is not var (inP, outP)) return null;
+        ["claude-haiku-4-5"] = (1.00, 5.00),
+        ["claude-sonnet-4-5"] = (3.00, 15.00),
+        ["claude-sonnet-5-5"] = (2.00, 10.00), // UNSOURCED / UNVALIDATED: check against anthropic.com/pricing
+    };
+
+    internal static double? ClaudeCost(JsonNode u, string model)
+    {
+        // ids may carry a date suffix: claude-haiku-4-5-20251001
+        var known = ClaudePrices.Keys.FirstOrDefault(k => model == k || model.StartsWith(k + "-"));
+        if (known == null) return null;
+        var (inP, outP) = ClaudePrices[known];
         long N(string k) => u[k]?.GetValue<long>() ?? 0;
-        long hour = u["cache_creation"]?["ephemeral_1h_input_tokens"]?.GetValue<long>() ?? 0; // billed at 2x input
+        // cache_creation_input_tokens is the total written; the 1-hour part (the system prompt) costs 2x input,
+        // the 5-minute rest 1.25x; cache reads 0.1x
+        long hour = u["cache_creation"]?["ephemeral_1h_input_tokens"]?.GetValue<long>() ?? 0;
         return (N("input_tokens") * inP + N("output_tokens") * outP + hour * inP * 2
               + (N("cache_creation_input_tokens") - hour) * inP * 1.25 + N("cache_read_input_tokens") * inP * 0.1) / 1_000_000;
     }
