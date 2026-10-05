@@ -15,6 +15,8 @@
     <Description>An AI assistant that operates your Windows PC</Description>
     <Version>1.3.1</Version>
     <ApplicationIcon>assets\otto.ico</ApplicationIcon>
+    <!-- Otto's interface is English: leave out Windows Forms/WPF/MailKit's translated built-in strings (13 languages, ~6 MB) -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
     <!-- UI Automation (UiTree) lives in the WPF pack; referencing it directly keeps WinForms implicit usings intact -->
@@ -25,6 +27,13 @@
     <EmbeddedResource Include="assets\otto.ico" LogicalName="otto.ico" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
   </ItemGroup>
+  <!-- WPF is referenced only for UI Automation (reading other apps' windows); Otto never draws a WPF window, so WPF's
+       DirectX renderer and its shader compiler are left out of the download. -->
+  <Target Name="LeaveOutWpfRenderer" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'D3DCompiler_47_cor3' Or '%(Filename)' == 'wpfgfx_cor3'" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <!-- the test project lives under tests\ and builds separately -->
     <Compile Remove="tests\**" />
