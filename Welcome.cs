@@ -18,7 +18,21 @@ static class Welcome
         };
         Win32Dark(f);
         var page = new Panel { Location = new Point(36, 28), Size = new Size(488, 360) };
-        var dots = new Label { AutoSize = false, Location = new Point(36, 410), Size = new Size(120, 24), ForeColor = Dim, Font = new Font("Segoe UI", 12f) };
+        // page dots drawn as circles: the ● and ○ characters come out at different sizes in Segoe UI
+        int at = 0, pageCount = 5;
+        var dots = new Panel { Location = new Point(36, 410), Size = new Size(140, 24) };
+        dots.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int d = dots.LogicalToDeviceUnits(9), gap = dots.LogicalToDeviceUnits(10), y = (dots.Height - d) / 2;
+            using var on = new SolidBrush(Fg);
+            using var off = new Pen(Dim, dots.LogicalToDeviceUnits(1));
+            for (int k = 0; k < pageCount; k++)
+            {
+                var r = new Rectangle(k * (d + gap) + 1, y, d, d);
+                if (k == at) e.Graphics.FillEllipse(on, r); else e.Graphics.DrawEllipse(off, r);
+            }
+        };
         var back = Button("Back", primary: false);
         var next = Button("Next", primary: true);
         back.Location = new Point(300, 404);
@@ -97,16 +111,16 @@ static class Welcome
             },
         };
 
-        int at = 0;
         void Go(int i)
         {
             at = i;
             page.Controls.Clear();
             page.Controls.Add(pages[at]());
-            dots.Text = string.Concat(Enumerable.Range(0, pages.Count).Select(k => k == at ? "● " : "○ "));
+            dots.Invalidate();
             back.Visible = at > 0;
             next.Text = at == pages.Count - 1 ? "Done" : "Next";
         }
+        pageCount = pages.Count;
         back.Click += (_, _) => Go(at - 1);
         next.Click += (_, _) => { if (at == pages.Count - 1) f.Close(); else Go(at + 1); };
         f.AcceptButton = next;
