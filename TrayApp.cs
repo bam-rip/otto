@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using Microsoft.Win32;
 
 namespace Otto;
 
@@ -499,15 +498,12 @@ sealed class TrayApp : ApplicationContext
 
     internal static bool StartsWithWindows()
     {
-        using var k = Registry.CurrentUser.OpenSubKey(RunKey);
-        return k?.GetValue("Otto") != null;
+        return Reg.Get(RunKey, "Otto") != null;
     }
 
     internal static void SetStartWithWindows(bool on)
     {
-        using var k = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (on) k.SetValue("Otto", $"\"{Environment.ProcessPath}\"");
-        else k.DeleteValue("Otto", false);
+        Reg.Set(RunKey, "Otto", on ? $"\"{Environment.ProcessPath}\"" : null);
     }
 
     protected override void ExitThreadCore()

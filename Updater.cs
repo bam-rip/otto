@@ -3,7 +3,6 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
-using Microsoft.Win32;
 
 namespace Otto;
 
@@ -13,7 +12,7 @@ namespace Otto;
 static class Updater
 {
     const string Repo = "bam-rip/otto";
-    const string Reg = @"Software\Otto";
+    const string Key = @"Software\Otto";
     static readonly HttpClient Http = CreateHttp();
 
     public sealed record Release(Version Version, string Tag, string PageUrl, string ZipUrl, string ZipName, string SigUrl);
@@ -40,14 +39,14 @@ static class Updater
     /// Updates the user said "not now" to (×) stay hidden until an even newer one comes out.
     public static string? Dismissed
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Reg); return k?.GetValue("DismissedUpdate") as string; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Reg); if (value == null) k.DeleteValue("DismissedUpdate", false); else k.SetValue("DismissedUpdate", value); }
+        get => Reg.Get(Key, "DismissedUpdate");
+        set => Reg.Set(Key, "DismissedUpdate", value);
     }
 
     static DateTime LastCheck
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Reg); return DateTime.TryParse(k?.GetValue("LastUpdateCheck") as string, out var d) ? d : DateTime.MinValue; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Reg); k.SetValue("LastUpdateCheck", value.ToString("o")); }
+        get => DateTime.TryParse(Reg.Get(Key, "LastUpdateCheck"), out var d) ? d : DateTime.MinValue;
+        set => Reg.Set(Key, "LastUpdateCheck", value.ToString("o"));
     }
 
     static HttpClient CreateHttp()

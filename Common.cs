@@ -21,7 +21,22 @@ static class Reg
         return k?.GetValue(name) as string;
     }
 
-    public static void Set(string key, string name, string value)
+    /// Writes a string; null removes the value.
+    public static void Set(string key, string name, string? value)
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key);
+        if (value == null) k.DeleteValue(name, false);
+        else k.SetValue(name, value);
+    }
+
+    /// A DWORD value (how on/off preferences have always been stored), or null if it isn't there.
+    public static int? GetInt(string key, string name)
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(key);
+        return k?.GetValue(name) is int v ? v : null;
+    }
+
+    public static void SetInt(string key, string name, int value)
     {
         using var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key);
         k.SetValue(name, value);

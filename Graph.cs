@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json.Nodes;
-using Microsoft.Win32;
 
 namespace Otto;
 
@@ -14,7 +13,7 @@ static class Graph
     const string Login = "https://login.microsoftonline.com/common/oauth2/v2.0";
     const string Api = "https://graph.microsoft.com/v1.0";
     const string TokenTarget = "Otto:microsoft";
-    const string Reg = @"Software\Otto\Mail";
+    const string Key = @"Software\Otto\Mail";
     const int MaxBody = 4_000;
 
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
@@ -23,14 +22,14 @@ static class Graph
 
     public static string ClientId
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Reg); return k?.GetValue("ClientId") as string ?? ""; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Reg); k.SetValue("ClientId", value.Trim()); }
+        get => Reg.Get(Key, "ClientId") ?? "";
+        set => Reg.Set(Key, "ClientId", value.Trim());
     }
 
     public static string? Account
     {
-        get { using var k = Registry.CurrentUser.OpenSubKey(Reg); return k?.GetValue("Account") as string; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(Reg); if (value == null) k.DeleteValue("Account", false); else k.SetValue("Account", value); }
+        get => Reg.Get(Key, "Account");
+        set => Reg.Set(Key, "Account", value);
     }
 
     public static bool SignedIn => ClientId.Length > 0 && KeyStore.ApiKey(TokenTarget, null) != null;

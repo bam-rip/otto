@@ -5,7 +5,6 @@ using MailKit.Net.Imap;
 using MailKit.Net.Smtp;
 using MailKit.Search;
 using MailKit.Security;
-using Microsoft.Win32;
 using MimeKit;
 
 namespace Otto;
@@ -15,7 +14,7 @@ namespace Otto;
 /// Windows Credential Manager. Same tools as the Outlook connector (Graph), minus the calendar.
 static class Imap
 {
-    const string Reg = @"Software\Otto\Imap";
+    const string Key = @"Software\Otto\Imap";
     const string PasswordTarget = "Otto:imap";
     const int MaxBody = 4_000;
 
@@ -45,17 +44,8 @@ static class Imap
     public static bool Connected => Address.Length > 0 && KeyStore.ApiKey(PasswordTarget, null) != null;
     static bool IsGmail => ImapServer.StartsWith("imap.gmail.com", StringComparison.OrdinalIgnoreCase);
 
-    static string Get(string name)
-    {
-        using var k = Registry.CurrentUser.OpenSubKey(Reg);
-        return k?.GetValue(name) as string ?? "";
-    }
-
-    static void Set(string name, string value)
-    {
-        using var k = Registry.CurrentUser.CreateSubKey(Reg);
-        k.SetValue(name, value.Trim());
-    }
+    static string Get(string name) => Reg.Get(Key, name) ?? "";
+    static void Set(string name, string value) => Reg.Set(Key, name, value.Trim());
 
     /// "host:port" → parts, defaulting the port.
     internal static (string host, int port) HostPort(string s, int fallback)
