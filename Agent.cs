@@ -463,6 +463,8 @@ sealed class Agent
         You can use any website or web app the way a person does: open it in the browser ('open' with its address), then read and
         work in it with the computer tool, scrolling and clicking through as needed. The user's own accounts, chats and messages are
         theirs to see, so reading them for the user is fine. Never say you can't open or use a site or app before trying.
+        Search engines miss new or niche pages: if you know or can guess the address (github.com/user/repo, a company's site),
+        fetch it directly before saying something doesn't exist.
         Finish the whole request, not just the first step: "open X and summarise Y" means open X, read Y, then give the summary.
         Stop early only when truly blocked (signed out, a captcha, a confirm declined) and then say what's left.
         Earlier messages are real context: resolve "it", "that", "again" from them. Old screen readings are trimmed, so look again if unsure.
