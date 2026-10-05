@@ -203,6 +203,13 @@ static class Program
             catch (Exception e) { File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-sign-error.txt"), e.Message); Environment.ExitCode = 1; }
             return;
         }
+        // Otto.exe --welcome → just the first-run walkthrough (doesn't change start-with-Windows)
+        if (Dev && Environment.GetCommandLineArgs().Contains("--welcome"))
+        {
+            ApplicationConfiguration.Initialize();
+            Welcome.Show(SettingsWindow.Show, () => false, _ => { });
+            return;
+        }
         // Otto.exe --settings → just the settings window
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {
@@ -379,12 +386,14 @@ sealed class TrayApp : ApplicationContext
         };
 
         if (failed.Count > 0) panel.AddSystem("Another app already owns: " + string.Join(", ", failed));
-        if (Providers.Problem(Providers.Current()) != null)
+        if (!Prefs.Welcomed && Providers.Problem(Providers.Current()) == null) Prefs.Welcomed = true; // set up before the tour existed
+        if (!Prefs.Welcomed || Providers.Problem(Providers.Current()) != null)
         {
-            // first run: ask straight away instead of making them find the tray menu
+            // first run: the walkthrough, which includes picking an AI, instead of making them find the tray menu
             panel.BeginInvoke(() =>
             {
-                SettingsWindow.Show();
+                if (!Prefs.Welcomed) ShowWelcome();
+                else SettingsWindow.Show();
                 panel.AddSystem(Providers.Problem(Providers.Current()) ?? "All set. Press Ctrl+Shift+J any time to open me.");
             });
         }
@@ -396,6 +405,7 @@ sealed class TrayApp : ApplicationContext
         var m = new ContextMenuStrip();
         m.Items.Add("Open", null, (_, _) => panel.ShowPanel());
         m.Items.Add("Settings (AI provider, key)…", null, (_, _) => SettingsWindow.Show());
+        m.Items.Add("Welcome tour", null, (_, _) => ShowWelcome());
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
         startup.Click += (_, _) => { SetStartWithWindows(!startup.Checked); startup.Checked = StartsWithWindows(); };
         m.Items.Add(startup);
@@ -587,13 +597,15 @@ sealed class TrayApp : ApplicationContext
         if (voice.Listening) { voice.Abort(); panel.SetListening(false); }
     }
 
-    static bool StartsWithWindows()
+    void ShowWelcome() => Welcome.Show(SettingsWindow.Show, StartsWithWindows, SetStartWithWindows);
+
+    internal static bool StartsWithWindows()
     {
         using var k = Registry.CurrentUser.OpenSubKey(RunKey);
         return k?.GetValue("Otto") != null;
     }
 
-    static void SetStartWithWindows(bool on)
+    internal static void SetStartWithWindows(bool on)
     {
         using var k = Registry.CurrentUser.CreateSubKey(RunKey);
         if (on) k.SetValue("Otto", $"\"{Environment.ProcessPath}\"");

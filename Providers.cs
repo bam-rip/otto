@@ -545,6 +545,7 @@ static class Prefs
     public static bool ReadAloud { get => Get("ReadAloud", false); set => Set("ReadAloud", value); }
     public static bool Sounds { get => Get("Sounds", true); set => Set("Sounds", value); }
     public static bool CheckUpdates { get => Get("CheckUpdates", true); set => Set("CheckUpdates", value); }
+    public static bool Welcomed { get => Get("Welcomed", false); set => Set("Welcomed", value); }
 
     static bool Get(string name, bool fallback)
     {
