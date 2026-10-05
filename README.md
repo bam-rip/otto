@@ -39,7 +39,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 3. Otto opens its settings on first start. Choose an AI provider and paste your API key. The key is stored in Windows Credential Manager, never in a file.
 4. If you want it to start with Windows, right-click Otto's tray icon and tick **Start with Windows**.
 
-Windows SmartScreen may say it "protected your PC" because the program isn't signed. Click **More info → Run anyway**. Some antivirus products may also be wary of a program that sends keystrokes and runs PowerShell. The full source is here, so you can check what it does.
+Windows SmartScreen may say it "protected your PC" because the program isn't signed. Click **More info → Run anyway**. To remove Otto later, right-click its tray icon and choose **Uninstall Otto…**. Some antivirus products may also be wary of a program that sends keystrokes and runs PowerShell. The full source is here, so you can check what it does.
 
 **From source (for developers):**
 
@@ -143,6 +143,17 @@ Otto.exe --search "query"                                # what the web_search t
 Otto.exe --render-ui                                     # draws the chat and history views to PNGs in %TEMP%
 Otto.exe --mail-test                                     # 5 newest emails through the connected account
 ```
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- Committers and reviewers: [bam-rip](https://github.com/bam-rip)
+- Approvers: [bam-rip](https://github.com/bam-rip)
+
+Signed releases are built from this repository's source by GitHub Actions (`.github/workflows/release.yml`) and each signing is approved by hand.
+Privacy: see [PRIVACY.md](PRIVACY.md). Otto only contacts other systems for what you ask it to do, plus a
+daily update check that can be turned off.
 
 ## License
 

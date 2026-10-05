@@ -1,14 +1,38 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
 
 namespace Otto;
 
 /// Saved chats, one JSON file each in %LOCALAPPDATA%\Otto\chats. Saved after every request, so nothing
 /// is lost when you start a new chat, quit, or restart. Screenshots and pasted images are left out (big,
-/// and stale anyway); the conversation itself is kept word for word.
+/// and stale anyway); the conversation itself is kept word for word. Files are encrypted with Windows' DPAPI,
+/// tied to your Windows account: other accounts on the PC, or someone with the disk, can't read them.
 static class ChatStore
 {
     const int Keep = 100; // oldest chats beyond this are removed
     static string Dir => Path.Combine(Paths.Data, "chats");
+
+    static readonly byte[] Magic = Encoding.ASCII.GetBytes("OTTO-DPAPI1\n");
+    static readonly byte[] Entropy = Encoding.ASCII.GetBytes("Otto saved chat");
+
+    internal static byte[] Seal(string json) =>
+        Magic.Concat(ProtectedData.Protect(Encoding.UTF8.GetBytes(json), Entropy, DataProtectionScope.CurrentUser)).ToArray();
+
+    /// Reads a chat file, encrypted or (from before 1.2.4) plain JSON.
+    internal static string Open(byte[] file, out bool wasPlain)
+    {
+        wasPlain = !file.AsSpan().StartsWith(Magic);
+        return wasPlain ? Encoding.UTF8.GetString(file)
+            : Encoding.UTF8.GetString(ProtectedData.Unprotect(file[Magic.Length..], Entropy, DataProtectionScope.CurrentUser));
+    }
+
+    static string Read(string path)
+    {
+        var text = Open(File.ReadAllBytes(path), out bool plain);
+        if (plain) try { File.WriteAllBytes(path, Seal(text)); } catch { } // encrypt older chats as they're read
+        return text;
+    }
 
     /// Text: everything you and Otto said (not tool output), for searching.
     public sealed record Summary(string Id, string Title, string Preview, DateTime When, string Text = "")
@@ -52,7 +76,7 @@ static class ChatStore
                 ["saved"] = DateTime.Now.ToString("o"),
                 ["messages"] = copy,
             };
-            File.WriteAllText(Path.Combine(Dir, id + ".json"), doc.ToJsonString());
+            File.WriteAllBytes(Path.Combine(Dir, id + ".json"), Seal(doc.ToJsonString()));
             foreach (var old in new DirectoryInfo(Dir).GetFiles("*.json").OrderByDescending(f => f.Name).Skip(Keep))
                 try { old.Delete(); } catch { }
         }
@@ -67,7 +91,7 @@ static class ChatStore
         {
             try
             {
-                var j = JsonNode.Parse(File.ReadAllText(f.FullName))!;
+                var j = JsonNode.Parse(Read(f.FullName))!;
                 list.Add(new Summary(Path.GetFileNameWithoutExtension(f.Name), j["title"]?.ToString() ?? "(chat)",
                     j["preview"]?.ToString() ?? "",
                     DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime,
@@ -80,7 +104,7 @@ static class ChatStore
 
     public static JsonArray? Load(string id)
     {
-        try { return JsonNode.Parse(File.ReadAllText(Path.Combine(Dir, id + ".json")))?["messages"]?.AsArray(); }
+        try { return JsonNode.Parse(Read(Path.Combine(Dir, id + ".json")))?["messages"]?.AsArray(); }
         catch { return null; }
     }
 

@@ -23,6 +23,7 @@
     <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
     <EmbeddedResource Include="assets\otto-tray.ico" LogicalName="otto-tray.ico" />
     <EmbeddedResource Include="assets\otto.ico" LogicalName="otto.ico" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.12" />
   </ItemGroup>
   <ItemGroup>
     <!-- the test project lives under tests\ and builds separately -->

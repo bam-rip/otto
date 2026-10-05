@@ -1,0 +1,46 @@
+name: Release build
+
+# Builds the release download from source, so a signed Otto.exe can be traced to this repository.
+# Run it from the Actions tab (Run workflow) or by pushing a tag like v1.2.4.
+# Code signing (SignPath) slots in after the build once the project is accepted: see the commented step.
+# The update signature (.sig) is NOT made here: that key never leaves the maintainer's PC.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test tests/Otto.Tests -c Release
+      - name: Publish single-file Otto.exe
+        run: >
+          dotnet publish Otto.csproj -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out
+      - name: Upload unsigned build
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Otto-unsigned
+          path: out/Otto.exe
+      # Once SignPath has accepted the project, add (with SIGNPATH_API_TOKEN as a repository secret):
+      # - uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: <from SignPath>
+      #     project-slug: otto
+      #     signing-policy-slug: release-signing
+      #     github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: signed

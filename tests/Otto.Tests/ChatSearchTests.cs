@@ -42,3 +42,19 @@ public class ChatSearchTests
         Assert.Equal("It's in Documents.", ChatStore.Preview(messages));
     }
 }
+
+public class ChatEncryptionTests
+{
+    [Fact]
+    public void Chats_are_encrypted_and_older_plain_ones_still_open()
+    {
+        const string json = """{"title":"secret plans","messages":[]}""";
+        var sealedFile = ChatStore.Seal(json);
+        Assert.DoesNotContain("secret plans", System.Text.Encoding.UTF8.GetString(sealedFile));
+        Assert.Equal(json, ChatStore.Open(sealedFile, out bool plain));
+        Assert.False(plain);
+
+        Assert.Equal(json, ChatStore.Open(System.Text.Encoding.UTF8.GetBytes(json), out plain)); // saved by 1.2.3 or earlier
+        Assert.True(plain);
+    }
+}

@@ -415,6 +415,7 @@ sealed class TrayApp : ApplicationContext
             catch { tray.ShowBalloonTip(3000, "Otto", "Couldn't reach GitHub to check for updates.", ToolTipIcon.None); }
         });
         m.Items.Add(new ToolStripSeparator());
+        m.Items.Add("Uninstall Otto…", null, (_, _) => { if (cts == null && Uninstall.Run()) ExitThread(); });
         m.Items.Add("Quit", null, (_, _) => ExitThread());
         return m;
     }

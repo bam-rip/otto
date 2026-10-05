@@ -15,9 +15,9 @@ if ($All) {
     Remove-Item (Join-Path $env:LOCALAPPDATA 'Otto') -Recurse -Force
     Remove-Item 'HKCU:\Software\Otto' -Recurse -Force
     # saved API keys and the email sign-in, in Windows Credential Manager
-    foreach ($t in @('Otto', 'Otto:openai', 'Otto:gemini', 'Otto:xai', 'Otto:deepseek', 'Otto:openrouter', 'Otto:custom', 'Otto:microsoft')) {
-        cmdkey /delete:$t | Out-Null
-    }
+    # every Otto entry: API keys (and extra keys like Otto:gemini#2), email sign-ins (Otto:microsoft, Otto:imap)
+    $targets = cmdkey /list | Select-String 'Target:\s*(?:LegacyGeneric:target=)?(Otto(?::[^\s]*)?)\s*$' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    foreach ($t in $targets) { cmdkey /delete:$t | Out-Null }
     Write-Host 'Otto and all of its data and saved keys are removed.'
 } else {
     Write-Host "Otto is removed. Your notes, routines, sounds and keys are kept (run with -All to remove those too)."
