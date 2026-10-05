@@ -324,7 +324,16 @@ sealed class TrayApp : ApplicationContext
             {
                 chatTokens += tokens;
                 chatCached += cached;
-                if (usd is double d) chatCost += d; else costKnown = false;
+                if (usd is double d)
+                {
+                    chatCost += d;
+                    if (Spending.Add(d) is string note)
+                    {
+                        panel.AddSystem(note);
+                        if (Spending.Blocked() != null) cts?.Cancel(); // crossed the limit mid-task: stop here
+                    }
+                }
+                else costKnown = false;
                 // most tokens are the same instructions re-sent every step; say how many were cheap cache re-reads
                 var reused = chatCached > 0 ? $", {chatCached * 100 / Math.Max(1, chatTokens)}% cached" : "";
                 panel.SetCost(!costKnown ? $"{chatTokens / 1000.0:0.#}k tokens this chat{reused}"
@@ -477,6 +486,7 @@ sealed class TrayApp : ApplicationContext
         if (installing) { panel.AddSystem("Updating Otto. Ask again in a few seconds, once it has restarted."); return; }
         lastReply = null;
         if (Providers.Problem(Providers.Current()) is string problem) { panel.AddSystem(problem); return; }
+        if (Spending.Blocked() is string limit) { panel.AddSystem(limit); return; }
         var attached = panel.TakeAttachments();
         panel.AddUser(attached.Count == 0 ? text : $"{text}\n(attached: {string.Join(", ", attached.Select(a => a.Name))})");
         Speaker.Stop();
@@ -659,9 +669,11 @@ sealed class TrayApp : ApplicationContext
     async void RunScheduled((Schedule.Item item, bool late) job)
     {
         if (Providers.Problem(Providers.Current()) != null) return;
+        if (Spending.Blocked() is string limit) { Notify($"Skipped: {job.item.Text.Clip(50)}", limit, null); return; }
         runningScheduled = true;
         var said = new System.Text.StringBuilder();
         var needed = new List<string>();
+        using var stop = new CancellationTokenSource();
         var a = new Agent
         {
             Unattended = true,
@@ -669,7 +681,11 @@ sealed class TrayApp : ApplicationContext
             OnText = t => said.AppendLine(t),
             Animate = () => false,
             OnTool = _ => { },
-            OnUsage = (usd, tokens, cached) => { },
+            OnUsage = (usd, tokens, cached) =>
+            {
+                if (usd is double d && Spending.Add(d) is string note) said.AppendLine(note);
+                if (Spending.Blocked() != null) stop.Cancel(); // over the limit: stop mid-task
+            },
             OnControl = _ => { },
         };
         var id = ChatStore.NewId();
@@ -677,7 +693,7 @@ sealed class TrayApp : ApplicationContext
         {
             await a.RunAsync($"(Scheduled task{(job.late ? ", running late because the PC was off" : "")}. Nobody is watching: you can't use the screen, " +
                              $"and anything that needs the user's OK will be declined, so finish what you can and say what's left.)\n\n{job.item.Text}",
-                             CancellationToken.None);
+                             stop.Token);
         }
         catch (Exception e) { said.AppendLine("It didn't finish: " + Agent.ErrorText(e)); }
         ChatStore.Save(id, a.Snapshot());
