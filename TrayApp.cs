@@ -36,8 +36,20 @@ sealed class TrayApp : ApplicationContext
         _ = panel.Handle; // create the handle now so background threads can Invoke onto it
         SingleInstance.Listen(panel, () => panel.ShowPanel());
         ControlOverlay.Init();
+        agent = CreateAgent();
+        WirePanel();
+        StartUpdateChecks();
+        tray = CreateTray();
+        ConnectFeatures();
+        if (RegisterHotkeys() is { Count: > 0 } failed) panel.AddSystem("Another app already owns: " + string.Join(", ", failed));
+        FirstRun();
+        if (Environment.GetCommandLineArgs().Contains("--show")) { panel.Pinned = true; panel.ShowPanel(); }
+    }
 
-        agent = new Agent
+    /// The agent, wired to the panel: confirmations, replies (whole or typed out), tool notes, screen control and cost.
+    Agent CreateAgent()
+    {
+        return new Agent
         {
             Confirm = q =>
             {
@@ -88,7 +100,11 @@ sealed class TrayApp : ApplicationContext
                     : chatCost < 0.01 ? "under 1¢ this chat" : $"${chatCost:0.00} this chat");
             },
         };
+    }
 
+    /// What the panel's buttons and menus do.
+    void WirePanel()
+    {
         panel.Submit += Run;
         panel.StopRequested += Kill;
         panel.MicToggled += ToggleMic;
@@ -116,17 +132,6 @@ sealed class TrayApp : ApplicationContext
             if (pendingUpdate != null) Updater.Dismissed = pendingUpdate.Tag; // hide until a newer one
             ShowUpdate(null);
         };
-        // quiet daily check: first a minute after start (not to slow login), then every few hours
-        // (the Updater itself only asks GitHub once a day)
-        updateTimer.Interval = 60_000;
-        updateTimer.Tick += async (_, _) =>
-        {
-            updateTimer.Interval = 6 * 60 * 60_000;
-            if (pendingUpdate == null && await Updater.CheckIfDueAsync() is Updater.Release r) ShowUpdate(r);
-        };
-        updateTimer.Start();
-        if (Environment.GetCommandLineArgs().Contains("--updated"))
-            panel.AddSystem($"Updated to Otto {Updater.Current}.");
         panel.UndoRequested += () =>
             Run("Undo what you just did in your last task: put moved or renamed files back, restore overwritten files from their backups, " +
                 "and reverse setting changes. Don't touch anything else. Then tell me in one line what you undid, or what can't be undone.");
@@ -144,8 +149,28 @@ sealed class TrayApp : ApplicationContext
             panel.RemoveLastTurn();
             if (agent.UndoLastTurn() is string text) panel.SetInput(text);
         };
+    }
 
-        tray = new NotifyIcon
+    /// The quiet daily update check, and a note after an update.
+    void StartUpdateChecks()
+    {
+        // quiet daily check: first a minute after start (not to slow login), then every few hours
+        // (the Updater itself only asks GitHub once a day)
+        updateTimer.Interval = 60_000;
+        updateTimer.Tick += async (_, _) =>
+        {
+            updateTimer.Interval = 6 * 60 * 60_000;
+            if (pendingUpdate == null && await Updater.CheckIfDueAsync() is Updater.Release r) ShowUpdate(r);
+        };
+        updateTimer.Start();
+        if (Environment.GetCommandLineArgs().Contains("--updated"))
+            panel.AddSystem($"Updated to Otto {Updater.Current}.");
+    }
+
+    /// The tray icon: left click opens the panel, a clicked notification opens its chat.
+    NotifyIcon CreateTray()
+    {
+        var tray = new NotifyIcon
         {
             Icon = Icons.Tray(),
             Text = "Otto",
@@ -158,6 +183,13 @@ sealed class TrayApp : ApplicationContext
             notifiedChat = null;
             panel.ShowPanel();
         };
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) panel.Toggle(); };
+        return tray;
+    }
+
+    /// Quick actions, settings links, and the reminder/scheduled-task clock.
+    void ConnectFeatures()
+    {
         QuickActions.Changed += panel.RefreshSuggestions;
         SettingsWindow.UpdateFound = ShowUpdate;
         SettingsWindow.WelcomeRequested = ShowWelcome;
@@ -165,8 +197,11 @@ sealed class TrayApp : ApplicationContext
         scheduleTimer.Tick += (_, _) => RunDue();
         scheduleTimer.Start();
         panel.BeginInvoke(RunDue); // anything that came due while Otto was off
-        tray.MouseClick +=(_, e) => { if (e.Button == MouseButtons.Left) panel.Toggle(); };
+    }
 
+    /// The global hotkeys; returns the ones another app already owns.
+    List<string> RegisterHotkeys()
+    {
         var failed = new List<string>();
         if (!keys.Register(KeyPanel, Hotkeys.Ctrl | Hotkeys.Shift, Keys.J)) failed.Add("Ctrl+Shift+J");
         if (!keys.Register(KeyTalk, Hotkeys.Ctrl | Hotkeys.Alt, Keys.J)) failed.Add("Ctrl+Alt+J");
@@ -179,8 +214,12 @@ sealed class TrayApp : ApplicationContext
             else if (id == KeyKill) Kill();
             else if (id == KeyAsk) AskAboutThis();
         };
+        return failed;
+    }
 
-        if (failed.Count > 0) panel.AddSystem("Another app already owns: " + string.Join(", ", failed));
+    /// First start: the welcome tour (or settings, when no AI is set up yet).
+    void FirstRun()
+    {
         if (!Prefs.Welcomed && Providers.Problem(Providers.Current()) == null) Prefs.Welcomed = true; // set up before the tour existed
         if (!Prefs.Welcomed || Providers.Problem(Providers.Current()) != null)
         {
@@ -192,7 +231,6 @@ sealed class TrayApp : ApplicationContext
                 panel.AddSystem(Providers.Problem(Providers.Current()) ?? "All set. Press Ctrl+Shift+J any time to open me.");
             });
         }
-        if (Environment.GetCommandLineArgs().Contains("--show")) { panel.Pinned = true; panel.ShowPanel(); }
     }
 
     ContextMenuStrip BuildMenu()
