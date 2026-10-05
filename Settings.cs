@@ -67,6 +67,7 @@ static class SettingsWindow
         readonly NavStack nav = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         readonly Panel navHost = new() { Dock = DockStyle.Left, Width = 250 }; // keeps the sidebar's place in the layout
         GlassSidebar? glass; // dark theme: the sidebar is drawn in its own blurred window over navHost
+        static readonly Color Hole = Color.FromArgb(1, 0, 1); // a colour nothing else uses: where the window is see-through
         readonly List<NavButton> navButtons = new();
         string current = "";
         const int W = 560; // content column width
@@ -144,6 +145,10 @@ static class SettingsWindow
                 glass.Dispose();
                 glass = null;
             }
+            // the strip under the glass becomes a see-through hole, so the blur shows the desktop, not this window's own
+            // solid background (blurring a flat colour just gives the flat colour back)
+            TransparencyKey = glass != null ? Hole : Color.Empty;
+            navHost.BackColor = glass != null ? Hole : Ui.Side;
             nav.SeeThrough = glass != null;
             nav.BackColor = glass != null ? Color.Black : Ui.Side;
             nav.Parent = glass != null ? glass : navHost;
@@ -762,6 +767,8 @@ static class SettingsWindow
         readonly Form owner;
         readonly Control spot;
         public bool IsGlass { get; }
+        /// Lighter than the panel's (92%): over a big flat sidebar the panel's tint hides the blur almost completely.
+        const uint Tint = 0xC0_1A1A1A; // 75% dark tint
 
         public GlassSidebar(Form owner, Control spot)
         {
@@ -776,7 +783,7 @@ static class SettingsWindow
             Owner = owner;
             Follow();
             Show(owner);
-            IsGlass = Acrylic.Set(Handle, true, ChatPanel.AcrylicTint);
+            IsGlass = Acrylic.Set(Handle, true, Tint);
         }
 
         public void Follow()
