@@ -10,6 +10,7 @@ static class RenderUi
     {
         using var panel = new ChatPanel { Size = new Size(420, 820) };
         panel.CreateControl();
+        _ = panel.Handle; // the real panel has a window handle, which is when it picks its background
         var chat = panel.Controls.OfType<ChatView>().Single();
         var history = panel.History;
         chat.SetBounds(0, 0, panel.Width, 640);

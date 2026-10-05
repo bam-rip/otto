@@ -8,13 +8,13 @@ namespace Otto;
 /// Everything except the text box is custom-drawn so it all sits on one grid: a 20px gutter on both sides.
 sealed class ChatPanel : Form
 {
-    internal static readonly Color Fg = Color.White;
-    internal static readonly Color Dim = Color.FromArgb(170, 170, 170);
+    internal static Color Fg => Theme.Fg;
+    internal static Color Dim => Theme.Dim;
     internal static readonly Color Accent = Color.FromArgb(0, 120, 215);
     internal static readonly Color Danger = Color.FromArgb(232, 72, 85);
     // Real acrylic (live blur by Windows, like the Start menu). Alpha = how solid: 0xEB is ~92% dark tint, 8% blur.
     const uint AcrylicTint = 0xEB_1A1A1A; // AABBGGRR
-    static readonly Color FieldColor = Color.FromArgb(46, 46, 46);
+    static Color FieldColor => Theme.Field;
     static readonly Color Ok = Color.FromArgb(108, 203, 95);
     static readonly Color Amber = Color.FromArgb(247, 181, 0);
     internal const string GlyphFont = "Segoe MDL2 Assets";
@@ -99,7 +99,7 @@ sealed class ChatPanel : Form
         input.BorderStyle = BorderStyle.None;
         input.BackColor = FieldColor;
         input.ForeColor = Fg;
-        input.Font = new Font("Segoe UI", 10.5f);
+        input.Font = new Font("Segoe UI", 10.5f * Theme.TextScale);
         input.Cue = "Ask Otto anything…";
         input.CueColor = Dim;
         input.KeyDown += (_, e) =>
@@ -184,6 +184,18 @@ sealed class ChatPanel : Form
     {
         base.OnHandleCreated(e);
         EnableAcrylic();
+        Theme.Changed += () => Ui(ApplyTheme);
+    }
+
+    /// Settings changed the look: colours, background, text size and side.
+    void ApplyTheme()
+    {
+        EnableAcrylic();
+        input.Font = new Font("Segoe UI", 10.5f * Theme.TextScale);
+        chat.SetTextScale(Theme.TextScale);
+        if (Visible && !closing) { var wa = Screen.PrimaryScreen!.WorkingArea; Left = Theme.PanelLeft ? wa.Left : wa.Right - Width; }
+        Relayout();
+        Invalidate(true);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -196,18 +208,23 @@ sealed class ChatPanel : Form
     /// behind the panel and costs Otto no CPU. Falls back to plain dark if Windows refuses.
     void EnableAcrylic()
     {
-        var accent = new AccentPolicy { AccentState = 4 /* ACRYLICBLURBEHIND */, AccentFlags = 2, GradientColor = AcrylicTint };
+        // light theme: a plain light background. The blur relies on black meaning "see-through", which would
+        // make dark text in the message box vanish.
+        bool want = !Theme.Light;
+        var accent = new AccentPolicy { AccentState = want ? 4 /* ACRYLICBLURBEHIND */ : 0, AccentFlags = 2, GradientColor = AcrylicTint };
         int size = Marshal.SizeOf(accent);
         var ptr = Marshal.AllocHGlobal(size);
         try
         {
             Marshal.StructureToPtr(accent, ptr, false);
             var data = new CompositionData { Attribute = 19 /* WCA_ACCENT_POLICY */, Data = ptr, SizeOfData = size };
-            acrylic = SetWindowCompositionAttribute(Handle, ref data) != 0;
-            if (!acrylic) BackColor = Color.FromArgb(26, 26, 26);
-            else input.BackColor = Color.Black; // black = see-through on acrylic
+            acrylic = SetWindowCompositionAttribute(Handle, ref data) != 0 && want;
+            BackColor = acrylic ? Color.Black : Theme.Back;
+            input.BackColor = acrylic ? Color.Black : FieldColor; // black = see-through on acrylic
+            input.ForeColor = Fg;
+            input.CueColor = Dim;
         }
-        catch { BackColor = Color.FromArgb(26, 26, 26); }
+        catch { acrylic = false; BackColor = Theme.Back; }
         finally { Marshal.FreeHGlobal(ptr); }
     }
 
@@ -245,7 +262,7 @@ sealed class ChatPanel : Form
             void Link(Rectangle r, string s, bool strong)
             {
                 bool hot = r.Contains(mouse);
-                if (hot) using (var hb = new SolidBrush(Color.FromArgb(30, 255, 255, 255))) g.FillRectangle(hb, r);
+                if (hot) using (var hb = new SolidBrush(Theme.Over(30))) g.FillRectangle(hb, r);
                 TextRenderer.DrawText(g, s, strong ? smallBoldFont : smallFont, r, hot || strong ? Fg : Dim,
                     mid | TextFormatFlags.HorizontalCenter);
             }
@@ -259,7 +276,7 @@ sealed class ChatPanel : Form
         {
             // "📎 report.pdf, Pasted image   ×" — click to remove them
             bool hot = rAttach.Contains(mouse);
-            using (var bb = new SolidBrush(Color.FromArgb(hot ? 40 : 24, 255, 255, 255))) g.FillRectangle(bb, rAttach);
+            using (var bb = new SolidBrush(Theme.Over(hot ? 40 : 24))) g.FillRectangle(bb, rAttach);
             TextRenderer.DrawText(g, GlyphAttach, glyphFont, new Rectangle(rAttach.X + D(6), rAttach.Y, D(20), rAttach.Height), Dim,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             var names = string.Join(", ", attachments.Select(a => a.Name));
@@ -285,7 +302,7 @@ sealed class ChatPanel : Form
         // the text box is a native control that can't do alpha, so on acrylic the field is just the blur
         // with a border (a filled field would never match the box's own background)
         if (!acrylic) using (var f = new SolidBrush(FieldColor)) g.FillRectangle(f, rBox);
-        using (var p = new Pen(input.Focused ? Accent : Color.FromArgb(80, 255, 255, 255), input.Focused ? 2 : 1))
+        using (var p = new Pen(input.Focused ? Accent : Theme.Over(80), input.Focused ? 2 : 1))
         {
             var r = rBox;
             if (input.Focused) { r.Inflate(-1, -1); }
@@ -305,7 +322,7 @@ sealed class ChatPanel : Form
     {
         bool hover = r.Contains(mouse);
         if (hover && hoverBg)
-            using (var hb = new SolidBrush(Color.FromArgb(30, 255, 255, 255))) g.FillRectangle(hb, r);
+            using (var hb = new SolidBrush(Theme.Over(30))) g.FillRectangle(hb, r);
         if (hover && !hoverBg) color = ControlPaint.Light(color, 0.6f);
         TextRenderer.DrawText(g, glyph, glyphFont, r, color,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
@@ -419,9 +436,9 @@ sealed class ChatPanel : Form
         if (!Visible || closing)
         {
             closing = false;
-            Bounds = new Rectangle(Visible ? Left : wa.Right, wa.Top, width, wa.Height);
+            Bounds = new Rectangle(Visible ? Left : Theme.PanelLeft ? wa.Left - width : wa.Right, wa.Top, width, wa.Height);
             slideFrom = Left;
-            slideTo = wa.Right - width;
+            slideTo = Theme.PanelLeft ? wa.Left : wa.Right - width;
             slideStart = DateTime.Now;
             sliding = true;
             Show();
@@ -439,7 +456,7 @@ sealed class ChatPanel : Form
         if (!Visible || closing) return;
         closing = true;
         slideFrom = Left;
-        slideTo = Screen.PrimaryScreen!.WorkingArea.Right;
+        slideTo = Theme.PanelLeft ? Screen.PrimaryScreen!.WorkingArea.Left - Width : Screen.PrimaryScreen!.WorkingArea.Right;
         slideStart = DateTime.Now;
         sliding = true;
         Kick();

@@ -51,7 +51,7 @@ sealed class ChatView : Control
     readonly ChatPanel owner;
     readonly List<Item> items = new();
     readonly List<(Rectangle r, string text)> suggestionRects = new();
-    readonly Font body = new("Segoe UI", 10.5f);
+    Font body = new("Segoe UI", 10.5f * Theme.TextScale);
     readonly Font small = new("Segoe UI", 8.5f);
     readonly Font smallBold = new("Segoe UI Semibold", 8.5f);
     readonly Font heading = new("Segoe UI Light", 15f);
@@ -96,6 +96,12 @@ sealed class ChatView : Control
     int D(int px) => owner.D(px);
     int G => owner.G;
     int Inner => Width - 2 * G;
+
+    public void SetTextScale(float scale)
+    {
+        body = new Font("Segoe UI", 10.5f * scale);
+        Changed();
+    }
 
     public bool HasPendingConfirm => items.OfType<Ask>().Any(a => a.Answer == null);
 
@@ -294,14 +300,14 @@ sealed class ChatView : Control
             int track = Height - D(8);
             int thumbH = Math.Max(D(30), (int)(track * (Height / (float)contentH)));
             int thumbY = D(4) + (int)((track - thumbH) * (scroll / MaxScroll));
-            using var b = new SolidBrush(Color.FromArgb(mouse.X > Width - D(14) ? 130 : 60, 255, 255, 255));
+            using var b = new SolidBrush(Theme.Over(mouse.X > Width - D(14) ? 130 : 60));
             g.FillRectangle(b, Width - D(7), thumbY, D(3), thumbH);
         }
     }
 
     void DrawMsg(Graphics g, Msg m, int alpha)
     {
-        var back = m.User ? ChatPanel.Accent : Color.FromArgb(40, 255, 255, 255);
+        var back = m.User ? ChatPanel.Accent : Theme.Over(40);
         using (var b = new SolidBrush(Color.FromArgb(back.A * alpha / 255, back))) g.FillRectangle(b, m.Box);
         var text = m.Text;
         if (m.Reveal) // typewriter
@@ -310,7 +316,7 @@ sealed class ChatView : Control
             text = text[..Math.Clamp(chars, 0, text.Length)];
         }
         var r = new RectangleF(m.Box.X + D(PadX), m.Box.Y + D(PadY), m.Box.Width - 2 * D(PadX) + 2, m.Box.Height - 2 * D(PadY) + 2);
-        using var fg = new SolidBrush(Color.FromArgb(alpha, ChatPanel.Fg));
+        using var fg = new SolidBrush(Color.FromArgb(alpha, m.User ? Color.White : ChatPanel.Fg)); // white on the blue bubble in either theme
         g.DrawString(text, body, fg, r, wrap);
     }
 
@@ -324,7 +330,7 @@ sealed class ChatView : Control
 
     void DrawAsk(Graphics g, Ask a, int alpha)
     {
-        using (var b = new SolidBrush(Color.FromArgb(34 * alpha / 255, 255, 255, 255))) g.FillRectangle(b, a.Box);
+        using (var b = new SolidBrush(Theme.Over(34 * alpha / 255))) g.FillRectangle(b, a.Box);
         using (var bar = new SolidBrush(Color.FromArgb(alpha, a.Answer == false ? ChatPanel.Danger : ChatPanel.Accent)))
             g.FillRectangle(bar, a.Box.X, a.Box.Y, D(3), a.Box.Height);
         using var fg = new SolidBrush(Color.FromArgb(alpha, ChatPanel.Fg));
@@ -332,7 +338,7 @@ sealed class ChatView : Control
         if (a.Answer == null)
         {
             DrawButton(g, a.Allow, "Allow", ChatPanel.Accent, alpha);
-            DrawButton(g, a.Deny, "Deny", Color.FromArgb(60, 255, 255, 255), alpha);
+            DrawButton(g, a.Deny, "Deny", Theme.Over(60), alpha);
         }
         else
         {
@@ -354,7 +360,7 @@ sealed class ChatView : Control
     void DrawTyping(Graphics g)
     {
         double t = Ease((DateTime.Now - typingSince).TotalMilliseconds / 260);
-        using (var b = new SolidBrush(Color.FromArgb((int)(40 * t), 255, 255, 255))) g.FillRectangle(b, typingBox);
+        using (var b = new SolidBrush(Theme.Over((int)(40 * t)))) g.FillRectangle(b, typingBox);
         double secs = DateTime.Now.TimeOfDay.TotalSeconds;
         int size = D(6), gap = D(6);
         int x0 = typingBox.X + (typingBox.Width - (3 * size + 2 * gap)) / 2;
@@ -363,7 +369,7 @@ sealed class ChatView : Control
             double phase = Math.Sin(secs * 6 - i * 0.7);
             int a = (int)(t * (110 + 145 * Math.Max(0, phase)));
             float lift = (float)(Math.Max(0, phase) * D(3));
-            using var dot = new SolidBrush(Color.FromArgb(a, 255, 255, 255));
+            using var dot = new SolidBrush(Theme.Over(a));
             g.FillEllipse(dot, x0 + i * (size + gap), typingBox.Y + (typingBox.Height - size) / 2f - lift, size, size);
         }
     }
@@ -386,7 +392,7 @@ sealed class ChatView : Control
         {
             var r = new Rectangle(G, y, Inner, D(44));
             suggestionRects.Add((r, s));
-            using (var b = new SolidBrush(Color.FromArgb(r.Contains(mouse) ? 52 : 30, 255, 255, 255))) g.FillRectangle(b, r);
+            using (var b = new SolidBrush(Theme.Over(r.Contains(mouse) ? 52 : 30))) g.FillRectangle(b, r);
             TextRenderer.DrawText(g, s, body, new Rectangle(r.X + D(14), r.Y, r.Width - D(48), r.Height), ChatPanel.Fg,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, "", glyph, new Rectangle(r.Right - D(34), r.Y, D(20), r.Height), ChatPanel.Dim,
@@ -463,7 +469,7 @@ sealed class ChatView : Control
             {
                 var r = new Rectangle(x, y, size, size);
                 bool hot = r.Contains(p);
-                if (hot) using (var hb = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillRectangle(hb, r);
+                if (hot) using (var hb = new SolidBrush(Theme.Over(40))) g.FillRectangle(hb, r);
                 bool justCopied = glyph == GlyphCopy && copiedMsg == m && copiedAt > DateTime.Now.AddSeconds(-1.2);
                 TextRenderer.DrawText(g, justCopied ? "" : glyph, this.glyph, // tick for a moment after copying
                     r, hot ? ChatPanel.Fg : ChatPanel.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Scrolled);

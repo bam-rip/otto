@@ -26,7 +26,7 @@ sealed class HistoryView : Control
     readonly Font smallBold = new("Segoe UI Semibold", 8.5f);
     readonly Font glyph = new(ChatPanel.GlyphFont, 9f);
     const string GlyphBack = "", GlyphDelete = "", GlyphSearch = "", GlyphClear = "";
-    static readonly Color FieldColor = Color.FromArgb(46, 46, 46);
+    static Color FieldColor => Theme.Field;
 
     /// TextRenderer ignores Graphics transforms and clips unless told to; text drawn while scrolled needs this.
     const TextFormatFlags Scrolled = TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping;
@@ -117,10 +117,11 @@ sealed class HistoryView : Control
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         rows.Clear();
         int inner = Width - 2 * G;
+        if (search.BackColor != FieldColor) { search.BackColor = FieldColor; search.ForeColor = ChatPanel.Fg; search.CueColor = ChatPanel.Dim; } // theme changed
 
         // ---- fixed header: back arrow, title, search box ----
         rBack = new Rectangle(G - D(10), D(4), D(32), D(32));
-        if (rBack.Contains(mouse)) using (var hb = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillRectangle(hb, rBack);
+        if (rBack.Contains(mouse)) using (var hb = new SolidBrush(Theme.Over(40))) g.FillRectangle(hb, rBack);
         TextRenderer.DrawText(g, GlyphBack, glyph, rBack, ChatPanel.Fg, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         using (var fg = new SolidBrush(ChatPanel.Fg)) g.DrawString("Recent chats", heading, fg, rBack.Right + D(4), D(5));
 
@@ -160,7 +161,7 @@ sealed class HistoryView : Control
             var del = new Rectangle(row.Right - D(36), row.Y + (rowH - D(30)) / 2, D(30), D(30));
             bool hot = row.Contains(m), current = c.Id == currentId;
             if (hot || current)
-                using (var b = new SolidBrush(Color.FromArgb(hot ? 44 : 26, 255, 255, 255))) g.FillRectangle(b, row);
+                using (var b = new SolidBrush(Theme.Over(hot ? 44 : 26))) g.FillRectangle(b, row);
             if (current)
                 using (var bar = new SolidBrush(ChatPanel.Accent)) g.FillRectangle(bar, row.X, row.Y, D(3), row.Height);
 
@@ -178,7 +179,7 @@ sealed class HistoryView : Control
 
             if (showDel)
             {
-                if (del.Contains(m)) using (var hb = new SolidBrush(Color.FromArgb(50, 255, 255, 255))) g.FillRectangle(hb, del);
+                if (del.Contains(m)) using (var hb = new SolidBrush(Theme.Over(50))) g.FillRectangle(hb, del);
                 TextRenderer.DrawText(g, GlyphDelete, glyph, del, del.Contains(m) ? ChatPanel.Danger : ChatPanel.Dim,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Scrolled);
             }
@@ -193,7 +194,7 @@ sealed class HistoryView : Control
             var text = confirming ? "Click again to delete every saved chat" : "Delete all saved chats";
             var size = TextRenderer.MeasureText(g, text, small, Size.Empty, TextFormatFlags.NoPadding | Scrolled);
             rDeleteAll = new Rectangle(G, y, size.Width + D(16), D(28));
-            if (rDeleteAll.Contains(m)) using (var hb = new SolidBrush(Color.FromArgb(36, 255, 255, 255))) g.FillRectangle(hb, rDeleteAll);
+            if (rDeleteAll.Contains(m)) using (var hb = new SolidBrush(Theme.Over(36))) g.FillRectangle(hb, rDeleteAll);
             TextRenderer.DrawText(g, text, small, rDeleteAll, confirming || rDeleteAll.Contains(m) ? ChatPanel.Danger : ChatPanel.Dim,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Scrolled);
             y = rDeleteAll.Bottom;
