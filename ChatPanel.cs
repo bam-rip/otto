@@ -371,7 +371,7 @@ sealed class ChatPanel : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData == Keys.Escape) { if (history.Visible) HideHistory(); else HidePanel(); return true; }
+        if (keyData == Keys.Escape) { if (history.Visible) { if (!history.ClearSearch()) HideHistory(); } else HidePanel(); return true; }
         return base.ProcessCmdKey(ref msg, keyData);
     }
 

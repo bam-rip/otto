@@ -10,7 +10,30 @@ static class ChatStore
     const int Keep = 100; // oldest chats beyond this are removed
     static string Dir => Path.Combine(Paths.Data, "chats");
 
-    public sealed record Summary(string Id, string Title, string Preview, DateTime When);
+    /// Text: everything you and Otto said (not tool output), for searching.
+    public sealed record Summary(string Id, string Title, string Preview, DateTime When, string Text = "")
+    {
+        /// Every word of the query appears somewhere in the chat.
+        public bool Matches(string query) =>
+            query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                 .All(w => Title.Contains(w, StringComparison.OrdinalIgnoreCase) || Text.Contains(w, StringComparison.OrdinalIgnoreCase));
+
+        /// A few words either side of the first match, when the match isn't in the title.
+        public string? Snippet(string query)
+        {
+            foreach (var w in query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (Title.Contains(w, StringComparison.OrdinalIgnoreCase)) continue;
+                int at = Text.IndexOf(w, StringComparison.OrdinalIgnoreCase);
+                if (at < 0) continue;
+                int from = Math.Max(0, at - 40);
+                int space = from == 0 ? -1 : Text.IndexOf(' ', from);
+                if (space >= 0 && space < at) from = space + 1;
+                return (from > 0 ? "…" : "") + Text[from..].Clip(110);
+            }
+            return null;
+        }
+    }
 
     public static string NewId() => DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
 
@@ -47,7 +70,8 @@ static class ChatStore
                 var j = JsonNode.Parse(File.ReadAllText(f.FullName))!;
                 list.Add(new Summary(Path.GetFileNameWithoutExtension(f.Name), j["title"]?.ToString() ?? "(chat)",
                     j["preview"]?.ToString() ?? "",
-                    DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime));
+                    DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime,
+                    j["messages"] is JsonArray msgs ? SearchText(msgs) : ""));
             }
             catch { }
         }
@@ -82,19 +106,27 @@ static class ChatStore
     internal static string Preview(JsonArray messages)
     {
         for (int i = messages.Count - 1; i >= 0; i--)
-        {
-            if (messages[i]?["role"]?.GetValue<string>() != "assistant") continue;
-            var text = messages[i]!["content"] switch
-            {
-                JsonValue v => v.ToString(),
-                JsonArray blocks => string.Join(" ", blocks.Where(b => b?["type"]?.GetValue<string>() == "text").Select(b => b!["text"]?.ToString())),
-                _ => "",
-            };
-            text = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
-            if (text.Length > 0) return text.Clip(120);
-        }
+            if (OttoText(messages[i]) is { Length: > 0 } text) return text.Clip(120);
         return "";
     }
+
+    /// What was said in the chat, one line of plain text: your messages and Otto's replies, no tool output.
+    internal static string SearchText(JsonArray messages) =>
+        string.Join(" ", messages.Select(m => m == null ? "" : Agent.TurnText(m) is string said ? Squash(said) : OttoText(m))
+                                 .Where(t => t.Length > 0));
+
+    static string OttoText(JsonNode? m)
+    {
+        if (m?["role"]?.GetValue<string>() != "assistant") return "";
+        return Squash(m["content"] switch
+        {
+            JsonValue v => v.ToString(),
+            JsonArray blocks => string.Join(" ", blocks.Where(b => b?["type"]?.GetValue<string>() == "text").Select(b => b!["text"]?.ToString())),
+            _ => "",
+        });
+    }
+
+    static string Squash(string s) => string.Join(" ", s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
     static void StripImages(JsonArray messages)
     {

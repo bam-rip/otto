@@ -26,13 +26,19 @@ static class RenderUi
         history.Show(new List<ChatStore.Summary>
         {
             new("a", "Find me the cheapest flights from Brisbane to Tokyo in April", "I found three options. The cheapest is Jetstar via Cairns at $612 return.", now.AddMinutes(-5)),
-            new("b", "Tidy up my downloads folder", "Done. I moved 214 files into Documents, Pictures, Installers and Archives.", now.AddHours(-3)),
+            new("b", "Tidy up my downloads folder", "Done. I moved 214 files into Documents, Pictures, Installers and Archives.", now.AddHours(-3),
+                "Tidy up my downloads folder Done. I moved 214 files into Documents, Pictures, Installers and Archives. The two Japan itinerary PDFs went into Documents\\Travel."),
             new("c", "What's the weather tomorrow", "Brisbane tomorrow: 27 degrees, mostly sunny, 10% chance of rain.", now.AddDays(-1)),
             new("d", "Write a cover letter for the barista job using my resume", "Saved Cover letter.docx next to your resume. It's about 250 words.", now.AddDays(-3)),
             new("e", "i have this word doc and this onenote page open on zen. i want them merged", "", now.AddDays(-12)),
         }, "a");
         Hover(history, new Point(200, 195)); // over the second chat, to show its delete button
         Save(history, "otto-ui-history.png");
+
+        // searching: "japan" is only inside the downloads chat, so its row shows the matching snippet
+        history.Controls.OfType<CueTextBox>().Single().Text = "japan";
+        Hover(history, new Point(-1, -1));
+        Save(history, "otto-ui-history-search.png");
     }
 
     static void Hover(Control c, Point p) =>

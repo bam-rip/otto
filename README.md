@@ -19,7 +19,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
 - **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
 - **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.
-- **Chat history.** Every chat is saved. The history icon lists them by day with a preview of each, so you can reopen or delete one. + starts a new chat without losing the last.
+- **Chat history.** Every chat is saved. The history icon lists them by day with a preview of each. Search finds any chat by what was said in it, and you can reopen or delete one. + starts a new chat without losing the last.
 - **Attachments.** Drag files onto the panel, or paste a screenshot with Ctrl+V. Otto sees images and works with files by their path.
 - **Updates.** Once a day Otto quietly checks for a new release. If there is one, a small bar in the panel offers to update: one click downloads it and restarts Otto, keeping your settings, keys and chats. You can turn the check off in settings.
 - **Stop and pin.** While Otto has control, a Stop button sits beside the banner. The pin icon keeps the panel open when you click elsewhere.

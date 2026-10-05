@@ -80,6 +80,8 @@ sealed class ChatView : Control
         int lastUser = items.FindLastIndex(it => it is Msg { User: true });
         return lastUser >= 0 && items.Skip(lastUser).Any(it => it is Note { Tool: true });
     }
+    /// TextRenderer ignores Graphics transforms and clips unless told to; text drawn while scrolled needs this.
+    const TextFormatFlags Scrolled = TextFormatFlags.PreserveGraphicsTranslateTransform | TextFormatFlags.PreserveGraphicsClipping;
     readonly List<(Rectangle r, string glyph, Action act, string tip)> actionRects = new();
     readonly ToolTip tips = new() { InitialDelay = 400 };
     string? shownTip;
@@ -447,8 +449,11 @@ sealed class ChatView : Control
             if (!row.Contains(p)) continue;
 
             var acts = new List<(string glyph, Action act, string tip)> { (GlyphCopy, () => Clipboard.SetText(m.Text), "Copy") };
-            if (!Busy && !m.User && i == lastOtto && lastUser >= 0) acts.Add((GlyphRetry, () => RetryRequested?.Invoke(), "Try again"));
-            if (!Busy && !m.User && i == lastOtto && LastTurnActed()) acts.Add((GlyphUndo, () => UndoRequested?.Invoke(), "Undo what Otto just did"));
+            // retry/undo act on the latest turn, so only offer them on Otto's answer to your last message,
+            // not on an older reply you've since followed up
+            bool answerToLast = !m.User && i == lastOtto && lastUser >= 0 && lastOtto > lastUser;
+            if (!Busy && answerToLast) acts.Add((GlyphRetry, () => RetryRequested?.Invoke(), "Try again"));
+            if (!Busy && answerToLast && LastTurnActed()) acts.Add((GlyphUndo, () => UndoRequested?.Invoke(), "Undo what Otto just did"));
             if (!Busy && m.User && i == lastUser) acts.Add((GlyphEdit, () => EditRequested?.Invoke(), "Edit and resend"));
 
             int size = D(ActionRow - 2), gap = D(2);
@@ -461,7 +466,7 @@ sealed class ChatView : Control
                 if (hot) using (var hb = new SolidBrush(Color.FromArgb(40, 255, 255, 255))) g.FillRectangle(hb, r);
                 bool justCopied = glyph == GlyphCopy && copiedMsg == m && copiedAt > DateTime.Now.AddSeconds(-1.2);
                 TextRenderer.DrawText(g, justCopied ? "" : glyph, this.glyph, // tick for a moment after copying
-                    r, hot ? ChatPanel.Fg : ChatPanel.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                    r, hot ? ChatPanel.Fg : ChatPanel.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | Scrolled);
                 actionRects.Add((r, glyph, glyph == GlyphCopy ? () => { act(); copiedAt = DateTime.Now; copiedMsg = m; Invalidate(); } : act, tip));
                 x += size + gap;
             }
@@ -497,8 +502,9 @@ sealed class ChatView : Control
                 menu.Items.Add("Copy", null, (_, _) => Clipboard.SetText(m.Text));
                 menu.Items.Add("Copy whole chat", null, (_, _) => Clipboard.SetText(Transcript()));
                 bool last = items.FindLastIndex(x => x is Msg mm && mm.User == m.User) == items.IndexOf(m);
-                if (!Busy && last && !m.User) menu.Items.Add("Try again", null, (_, _) => RetryRequested?.Invoke());
-                if (!Busy && last && !m.User && LastTurnActed()) menu.Items.Add("Undo what Otto just did", null, (_, _) => UndoRequested?.Invoke());
+                bool answerToLast = last && !m.User && items.IndexOf(m) > items.FindLastIndex(x => x is Msg { User: true });
+                if (!Busy && answerToLast) menu.Items.Add("Try again", null, (_, _) => RetryRequested?.Invoke());
+                if (!Busy && answerToLast && LastTurnActed()) menu.Items.Add("Undo what Otto just did", null, (_, _) => UndoRequested?.Invoke());
                 if (!Busy && last && m.User) menu.Items.Add("Edit and resend", null, (_, _) => EditRequested?.Invoke());
                 menu.Show(this, e.Location);
                 return;
