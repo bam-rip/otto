@@ -444,6 +444,19 @@ sealed class ChatView : Control
         Invalidate();
     }
 
+    void ExportChat()
+    {
+        var lines = items.OfType<Msg>().Select(m => new Export.Line(m.User, m.Text)).ToList();
+        bool was = owner.Pinned;
+        owner.Pinned = true; // the save dialog takes focus; don't let the panel slide away under it
+        try
+        {
+            if (Export.SaveWithDialog(owner, lines) is string path) AddNote("Saved this chat to " + path, tool: false);
+        }
+        catch (Exception e) { AddNote("Couldn't save the chat: " + Agent.ErrorText(e), tool: false); }
+        finally { owner.Pinned = was; }
+    }
+
     string Transcript() => string.Join("\n\n", items.OfType<Msg>().Select(m => (m.User ? "You: " : "Otto: ") + m.Text));
 
     protected override void OnMouseLeave(EventArgs e) { mouse = new Point(-1, -1); Invalidate(); }
@@ -517,6 +530,7 @@ sealed class ChatView : Control
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("Copy", null, (_, _) => Clipboard.SetText(m.Text));
                 menu.Items.Add("Copy whole chat", null, (_, _) => Clipboard.SetText(Transcript()));
+                menu.Items.Add("Export chat…", null, (_, _) => ExportChat());
                 bool last = items.FindLastIndex(x => x is Msg mm && mm.User == m.User) == items.IndexOf(m);
                 bool answerToLast = last && !m.User && items.IndexOf(m) > items.FindLastIndex(x => x is Msg { User: true });
                 if (!Busy && answerToLast) menu.Items.Add("Try again", null, (_, _) => RetryRequested?.Invoke());
