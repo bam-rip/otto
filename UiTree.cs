@@ -98,6 +98,44 @@ static class UiTree
         return found;
     }
 
+    /// The label of the control under a screen point (and the one it sits in, for text inside a button),
+    /// or null if UI Automation can't tell in time.
+    public static string? LabelAt(Point p)
+    {
+        var work = Task.Run(() =>
+        {
+            try
+            {
+                var e = AutomationElement.FromPoint(new System.Windows.Point(p.X, p.Y));
+                var name = e.Current.Name;
+                var parent = TreeWalker.ControlViewWalker.GetParent(e);
+                if (parent != null && parent.Current.ControlType is var t && (t == ControlType.Button || t == ControlType.Hyperlink))
+                    name = parent.Current.Name + " " + name;
+                return name;
+            }
+            catch { return null; }
+        });
+        return work.Wait(1500) ? work.Result : null;
+    }
+
+    /// The label of the control with keyboard focus, or null.
+    public static string? FocusedLabel()
+    {
+        var work = Task.Run(() => { try { return AutomationElement.FocusedElement?.Current.Name; } catch { return null; } });
+        return work.Wait(1500) ? work.Result : null;
+    }
+
+    /// Is the keyboard focus in a password box? Otto never types into those.
+    public static bool FocusIsPassword()
+    {
+        var work = Task.Run(() =>
+        {
+            try { return AutomationElement.FocusedElement?.Current.IsPassword == true; }
+            catch { return false; }
+        });
+        return work.Wait(1500) && work.Result;
+    }
+
     /// Finds a control in the front window by its label, for clicks that must still work next time
     /// (saved routines) where element numbers and positions would have moved.
     public static Point FindByName(string label)
@@ -194,6 +232,11 @@ static class UiTree
     static readonly string[] Browsers = { "chrome", "msedge", "firefox", "zen", "brave", "opera", "vivaldi" };
 
     static bool IsBrowser(IntPtr h) => Browsers.Contains(Win32.ProcessName(h));
+
+    static readonly string[] MailApps = { "outlook", "olk", "hxoutlook", "thunderbird", "mailspring" };
+
+    /// A browser or mail app is in front: what's on screen was written by whoever made the page or sent the email.
+    public static bool ShowsOutsideContent(IntPtr h) => IsBrowser(h) || MailApps.Contains(Win32.ProcessName(h));
 
     /// Titles of the other open windows, so the model knows what it could switch to.
     static IEnumerable<string> OtherWindows(IntPtr front) =>

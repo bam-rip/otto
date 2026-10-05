@@ -20,10 +20,20 @@ static class Tools
         @"Set-MpPreference|Add-MpPreference|takeown|icacls|cipher|vssadmin|wbadmin|Invoke-Expression|iex|sdelete)\b" +
         @"|\bformat\s+[a-z]:|\breg\s+(add|delete|import)\b|-Verb\s+RunAs" +
         @"|\b(Set-ItemProperty|New-ItemProperty|New-Item|Set-Item|Rename-ItemProperty|Clear-ItemProperty|Rename-Item|Move-Item|Copy-Item)\b[^;|\n]*(HKLM:|HKEY_LOCAL_MACHINE)" +
-        @"|::Delete\s*\(|\.Delete\s*\(|::WriteAllBytes|Remove-ItemProperty|-EncodedCommand|\s-enc\s",
+        @"|::Delete\s*\(|\.Delete\s*\(|::WriteAllBytes|Remove-ItemProperty|-EncodedCommand|\s-enc\s" +
+        // things that run later by themselves (persistence)
+        @"|\b(schtasks|Register-ScheduledTask|New-ScheduledTask|New-Service|Set-Service|sc(\.exe)?\s+(create|config)|Register-WmiEvent|Set-WmiInstance)\b" +
+        @"|CurrentVersion\\(Run|RunOnce|Policies)|\\Start Menu\\Programs\\Startup|\$PROFILE\b|Microsoft\\Windows\\Start Menu" +
+        // sending data out, or fetching and running code
+        @"|\b(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|curl|wget)\b[^;|\n]*-(Method\s+(Post|Put|Patch)|InFile|Body)\b" +
+        @"|\b(DownloadString|DownloadFile|UploadString|UploadFile|UploadData|Start-BitsTransfer|bitsadmin|certutil|mshta|rundll32|regsvr32|wmic|cscript|wscript|msiexec)\b" +
+        @"|\[scriptblock\]::Create|\.Invoke\s*\(|&\s*\(|&\s*\$|Add-Type\b|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}" +
+        // overwriting or emptying files, and Windows' own security
+        @"|\b(Clear-Item|Set-Acl|Disable-WindowsOptionalFeature|Set-NetFirewallProfile|netsh\s+advfirewall|Set-MpPreference|Stop-Service)\b" +
+        // network paths (\\server\share) leak the Windows sign-in to that server
+        @"|(^|[\s'""(=])\\\\[A-Za-z0-9]",
         RegexOptions.IgnoreCase);
 
-    static readonly string[] RiskyExtensions = { ".exe", ".bat", ".cmd", ".ps1", ".msi", ".vbs", ".js", ".reg", ".lnk", ".scr" };
 
     static HttpClient CreateHttp()
     {
@@ -93,27 +103,49 @@ static class Tools
 
     public static async Task<string> Run(string name, JsonNode input, Func<string, bool> confirm, CancellationToken ct)
     {
+        var result = await RunTool(name, input, confirm, ct);
+        Safety.Saw(name); // anything it just read could carry planted instructions
+        return result;
+    }
+
+    static async Task<string> RunTool(string name, JsonNode input, Func<string, bool> confirm, CancellationToken ct)
+    {
         // Outlook wins when both are set up (it has the calendar too)
         if (Graph.Handles(name) && Graph.SignedIn) return await Graph.Run(name, input, confirm, ct);
         if (Imap.Handles(name) && Imap.Connected) return await Imap.Run(name, input, confirm, ct);
         if (Graph.Handles(name)) return "Email isn't connected. The user can set it up in Otto's settings (gear icon).";
+        bool Allowed(string action) => Safety.AskIfUntrusted(action) is not string q || confirm(q);
         switch (name)
         {
             case "web_search": return await Search(S(input, "query"), ct);
-            case "fetch_page": return await Fetch(S(input, "url"), input["find"]?.GetValue<string>(), ct);
+            case "fetch_page":
+            {
+                var url = S(input, "url");
+                if (Safety.LooksLikeSmuggling(url) && !Allowed($"Open this web address (it carries a lot of data in it):\n\n{url.Clip(300)}"))
+                    return "User declined.";
+                return await Fetch(url, input["find"]?.GetValue<string>(), ct);
+            }
             case "open":
             {
                 var target = S(input, "target");
-                if (RiskyExtensions.Contains(Path.GetExtension(target).ToLowerInvariant()) && FromInternet(target)
-                    && !confirm($"Run this downloaded program?\n\n{target}"))
+                Safety.RefuseNetworkPath(target);
+                if (Safety.RiskyScheme(target) is string scheme
+                    && !confirm($"Open this {scheme}: link? Links of this kind can install or run things on your PC.\n\n{target}"))
                     return "User declined.";
+                if (Safety.IsRunnable(target))
+                {
+                    if (FromInternet(target) && !confirm($"Run this downloaded program?\n\n{target}")) return "User declined.";
+                    if (!Allowed($"Run {target}")) return "User declined.";
+                }
                 return await Apps.Open(target, ct);
             }
-            case "list_dir": return ListDir(S(input, "path"));
-            case "read_file": return ReadFile(S(input, "path"));
+            case "list_dir": Safety.RefuseNetworkPath(S(input, "path")); return ListDir(S(input, "path"));
+            case "read_file": Safety.RefuseNetworkPath(S(input, "path")); return ReadFile(S(input, "path"));
             case "write_file":
             {
+                Safety.RefuseNetworkPath(S(input, "path"));
                 var path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(S(input, "path")));
+                if (Safety.SensitiveWrite(path) is string where && !confirm($"Write to {where}?\n\n{path}")) return "User declined.";
                 // overwriting is undoable instead of asking: the old version goes to a backup first
                 var backup = File.Exists(path) ? Backup(path) : null;
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -123,12 +155,14 @@ static class Tools
             case "run_powershell":
             {
                 var cmd = S(input, "command");
-                if (RiskyCommand.IsMatch(cmd) && !confirm($"Run this PowerShell command?\n\n{cmd}")) return "User declined.";
+                if (RiskyCommand.IsMatch(cmd)) { if (!confirm($"Run this PowerShell command?\n\n{cmd}")) return "User declined."; }
+                else if (!Allowed($"Run this PowerShell command:\n\n{cmd}")) return "User declined.";
                 return await PowerShell(cmd, ct);
             }
             case "window": return Apps.Window(S(input, "action"), input["title"]?.GetValue<string>());
-            case "remember": return Memory.Remember(input);
-            case "save_routine": return Memory.SaveRoutine(input);
+            // notes and routines go into every future chat, so a planted one would stick
+            case "remember": return Allowed($"Remember this for every future chat: {input["note"]}") ? Memory.Remember(input) : "User declined.";
+            case "save_routine": return Allowed($"Save the routine \"{input["name"]}\" (it can replay commands later)") ? Memory.SaveRoutine(input) : "User declined.";
             case "forget_routine": return Memory.Forget(input);
             default: throw new ArgumentException($"Unknown tool {name}");
         }
@@ -281,9 +315,21 @@ static class Tools
         catch { return href; }
     }
 
+    /// fetch_page only: refuses addresses on this PC or the local network (see Safety.PublicOnlyHandler).
+    static readonly HttpClient PublicHttp = CreatePublicHttp();
+
+    static HttpClient CreatePublicHttp()
+    {
+        var h = new HttpClient(Safety.PublicOnlyHandler()) { Timeout = TimeSpan.FromSeconds(30) };
+        foreach (var header in Http.DefaultRequestHeaders) h.DefaultRequestHeaders.TryAddWithoutValidation(header.Key, header.Value);
+        return h;
+    }
+
     static async Task<string> Fetch(string url, string? find, CancellationToken ct)
     {
-        using var res = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https"))
+            return $"{url} isn't a web address (http or https). Use read_file for files on this PC.";
+        using var res = await PublicHttp.GetAsync(u, HttpCompletionOption.ResponseHeadersRead, ct);
         var type = res.Content.Headers.ContentType?.MediaType ?? "";
         // PDFs, images, zips etc. would come back as garbage text and waste tokens
         bool textual = type.Length == 0 || type.StartsWith("text/") || type.Contains("html") || type.Contains("json") || type.Contains("xml");
@@ -353,7 +399,9 @@ static class Tools
         if (path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
         {
             using var zip = ZipFile.OpenRead(path);
-            using var reader = new StreamReader(zip.GetEntry("word/document.xml")!.Open());
+            var entry = zip.GetEntry("word/document.xml") ?? throw new InvalidDataException($"{path} isn't a Word document.");
+            if (entry.Length > 50_000_000) return $"{path} is too big to read whole ({entry.Length / 1_000_000} MB of text).";
+            using var reader = new StreamReader(entry.Open());
             var xml = Regex.Replace(reader.ReadToEnd(), "</w:p>", "\n");
             return Truncate(Html.StripTags(xml));
         }
@@ -381,6 +429,17 @@ static class Tools
         finally { try { File.Delete(script); } catch { } }
     }
 
+    /// Keeps the first 200k characters and drains the rest (so the process isn't blocked on a full pipe).
+    static async Task<string> ReadCapped(StreamReader r, CancellationToken ct)
+    {
+        var sb = new StringBuilder();
+        var buf = new char[8192];
+        int n;
+        while ((n = await r.ReadAsync(buf, ct)) > 0)
+            if (sb.Length < 200_000) sb.Append(buf, 0, n);
+        return sb.ToString();
+    }
+
     static async Task<string> RunScript(string script, CancellationToken ct)
     {
         var psi = new ProcessStartInfo("powershell.exe")
@@ -396,8 +455,8 @@ static class Tools
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         };
         using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEndAsync(ct);
-        var stderr = p.StandardError.ReadToEndAsync(ct);
+        var stdout = ReadCapped(p.StandardOutput, ct);
+        var stderr = ReadCapped(p.StandardError, ct);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromMinutes(2));
         try { await p.WaitForExitAsync(timeout.Token); }

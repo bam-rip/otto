@@ -88,7 +88,7 @@ static class Imap
         var c = new ImapClient { Timeout = 30_000 };
         try
         {
-            await c.ConnectAsync(host, port, port == 993 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTlsWhenAvailable, ct);
+            await c.ConnectAsync(host, port, port == 993 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls, ct);
             await c.AuthenticateAsync(address, password, ct);
             return c;
         }

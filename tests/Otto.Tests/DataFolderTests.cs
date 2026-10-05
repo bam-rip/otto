@@ -4,6 +4,7 @@ namespace Otto.Tests;
 
 /// Everything here writes files, so it runs against a temp folder (Paths.Data), never the real
 /// %LOCALAPPDATA%\Otto. All in one class so xunit runs these one at a time.
+[Collection("Data folder")] // shares Paths.Data with SafetyTests, so never in parallel with it
 public sealed class DataFolderTests : IDisposable
 {
     readonly string original = Paths.Data;

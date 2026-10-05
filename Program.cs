@@ -11,12 +11,20 @@ static class Program
         catch (AbandonedMutexException) { return true; } // the old copy exited without releasing it: ours now
     }
 
+    /// Debug switches (--api-test, --mail-test, --update-test...) run tools with no window and no one watching,
+    /// so a release build only honours them when OTTO_DEV=1 is set. Debug builds always do.
+#if DEBUG
+    static bool Dev => true;
+#else
+    static bool Dev => Environment.GetEnvironmentVariable("OTTO_DEV") == "1";
+#endif
+
     [STAThread]
     static void Main()
     {
         Migration.FromJarvis(); // used to be called Jarvis; carry its data over once
         // debug: Otto.exe --dump-ui → writes what the agent would "see" of the front window, no API calls
-        if (Environment.GetCommandLineArgs().Contains("--dump-ui"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--dump-ui"))
         {
             Thread.Sleep(1500);
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -25,14 +33,14 @@ static class Program
             return;
         }
         // debug: Otto.exe --bench → timings of the local per-step work, in %TEMP%\otto-bench.txt
-        if (Environment.GetCommandLineArgs().Contains("--bench"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--bench"))
         {
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-bench.txt"), Desktop.Bench());
             return;
         }
         // debug: Otto.exe --api-test "prompt" → runs one request headless, log in %TEMP%\otto-api-test.txt
         var args = Environment.GetCommandLineArgs();
-        int at = Array.IndexOf(args, "--api-test");
+        int at = (Dev ? Array.IndexOf(args, "--api-test") : -1);
         if (at >= 0)
         {
             var log = new System.Text.StringBuilder();
@@ -76,7 +84,7 @@ static class Program
             return;
         }
         // Otto.exe --overlay-demo → shows the "in control" glow for 6 seconds with a few click ripples
-        if (Environment.GetCommandLineArgs().Contains("--overlay-demo"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--overlay-demo"))
         {
             ApplicationConfiguration.Initialize();
             ControlOverlay.Init();
@@ -94,7 +102,7 @@ static class Program
             return;
         }
         // Otto.exe --list-models → the current provider's model list (no cost), in %TEMP%\otto-models.txt
-        if (Environment.GetCommandLineArgs().Contains("--list-models"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--list-models"))
         {
             var c = Providers.Current();
             string outp;
@@ -104,7 +112,7 @@ static class Program
             return;
         }
         // Otto.exe --transcribe file.wav → what the voice transcription makes of a recording, in %TEMP%\otto-transcript.txt
-        int tr = Array.IndexOf(Environment.GetCommandLineArgs(), "--transcribe");
+        int tr = (Dev ? Array.IndexOf(Environment.GetCommandLineArgs(), "--transcribe") : -1);
         if (tr >= 0)
         {
             string outp;
@@ -114,7 +122,7 @@ static class Program
             return;
         }
         // Otto.exe --search "query" → what web_search returns (no AI cost), in %TEMP%\otto-search.txt
-        int se = Array.IndexOf(Environment.GetCommandLineArgs(), "--search");
+        int se = (Dev ? Array.IndexOf(Environment.GetCommandLineArgs(), "--search") : -1);
         if (se >= 0)
         {
             string outp;
@@ -124,7 +132,7 @@ static class Program
             return;
         }
         // Otto.exe --mail-test → the 5 newest inbox emails through the IMAP connector, in %TEMP%\otto-mail.txt
-        if (Environment.GetCommandLineArgs().Contains("--mail-test"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--mail-test"))
         {
             string outp;
             try { outp = Tools.Run("email_list", new System.Text.Json.Nodes.JsonObject { ["count"] = 5 }, _ => false, CancellationToken.None).GetAwaiter().GetResult(); }
@@ -133,7 +141,7 @@ static class Program
             return;
         }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
-        if (Environment.GetCommandLineArgs().Contains("--update-test"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--update-test"))
         {
             string log;
             try
@@ -146,6 +154,19 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-update.txt"), log);
             return;
         }
+        // release signing (maintainer only): --make-signing-key prints the public key; --sign-release file.zip writes file.zip.sig
+        if (Dev && Environment.GetCommandLineArgs().Contains("--make-signing-key"))
+        {
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-public-key.txt"), Updater.Signing.MakeKey());
+            return;
+        }
+        int sr = Dev ? Array.IndexOf(Environment.GetCommandLineArgs(), "--sign-release") : -1;
+        if (sr >= 0)
+        {
+            try { Updater.Signing.Sign(Environment.GetCommandLineArgs()[sr + 1]); Environment.ExitCode = 0; }
+            catch (Exception e) { File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-sign-error.txt"), e.Message); Environment.ExitCode = 1; }
+            return;
+        }
         // Otto.exe --settings → just the settings window
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {
@@ -155,7 +176,7 @@ static class Program
         }
         // Otto.exe --render-ui → the chat (hovering a wide bubble) and the history list drawn offscreen,
         // as %TEMP%\otto-ui-chat.png and otto-ui-history.png, for checking layout without the real panel
-        if (Environment.GetCommandLineArgs().Contains("--render-ui"))
+        if (Dev && Environment.GetCommandLineArgs().Contains("--render-ui"))
         {
             ApplicationConfiguration.Initialize();
             RenderUi.Run();

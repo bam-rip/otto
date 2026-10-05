@@ -59,6 +59,9 @@ Otto asks before anything with real consequences: buying or paying, signing some
 
 ## Safety
 
+See [SECURITY.md](SECURITY.md) for the full security review, what Otto checks in code, and the risks that remain.
+
+
 Please take these seriously:
 
 - **Otto has real control of your PC.** It moves the real mouse and keyboard and can run commands. Keep **Ctrl+Alt+End** in mind, and don't leave it running unattended on things you care about.
@@ -128,7 +131,7 @@ It's plain C# / WinForms on .NET 8, with no UI framework. Some useful entry poin
 | `Tools.cs`, `Apps.cs`, `Graph.cs`, `Memory.cs` | The tools Otto can call |
 | `ChatPanel.cs`, `ChatView.cs`, `Overlay.cs` | The panel and the glow |
 
-Debug switches (none of them use API credits, except `--api-test`):
+Debug switches (none of them use API credits, except `--api-test`). Release builds ignore them unless the `OTTO_DEV` environment variable is `1`, because they run tools with no one watching:
 
 ```powershell
 Otto.exe --api-test "first message || second message"   # headless chat, log in %TEMP%\otto-api-test.txt

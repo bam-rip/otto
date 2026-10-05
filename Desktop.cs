@@ -74,11 +74,24 @@ static partial class Desktop
         var key = input.ToJsonString();
         repeats = key == lastInput ? repeats + 1 : 0;
         lastInput = key;
+        bool approved = false;
         if (NeedsApproval(input, steps) is string why)
         {
             if (!confirm(why)) return JsonValue.Create("User declined. Don't retry this; ask them what they'd like instead.")!;
+            approved = true;
             await Task.Delay(250, ct); // let the panel slide out of the way again (its close animation is 150 ms)
         }
+        // Backstop for when the model didn't flag a step: clicking a Buy / Place order / Delete permanently
+        // button asks anyway. Checked on the control actually under the pointer, however the click was aimed.
+        async Task<bool> MayClick(Point p)
+        {
+            if (approved || UiTree.LabelAt(p) is not string label || !Safety.IsConsequential(label)) return true;
+            if (!confirm($"Click \"{label.Trim().Clip(80)}\"? It looks like it pays, signs, submits or deletes something.")) return false;
+            approved = true;
+            await Task.Delay(250, ct);
+            return true;
+        }
+        const string Declined = "User declined that click. Don't retry it; ask them what they'd like instead.";
 
         bool acted = false;
         for (int i = 0; i < steps.Count; i++)
@@ -109,8 +122,8 @@ static partial class Desktop
                     readings++;
                     return Capture(Rect(P("x", "y"), P("x2", "y2")), mark: false);
                 case "move": MoveTo(P("x", "y")); break;
-                case "click": Click(P("x", "y"), Btn.Left, 1); break;
-                case "double_click": Click(P("x", "y"), Btn.Left, 2); break;
+                case "click": { var p = P("x", "y"); if (!await MayClick(p)) return JsonValue.Create(Declined)!; Click(p, Btn.Left, 1); break; }
+                case "double_click": { var p = P("x", "y"); if (!await MayClick(p)) return JsonValue.Create(Declined)!; Click(p, Btn.Left, 2); break; }
                 case "right_click": Click(P("x", "y"), Btn.Right, 1); break;
                 case "middle_click": Click(P("x", "y"), Btn.Middle, 1); break;
                 case "drag": await Drag(P("x", "y"), P("x2", "y2"), ct); break;
@@ -119,9 +132,19 @@ static partial class Desktop
                     Scroll(step["direction"]?.GetValue<string>() ?? "down", Num(step["amount"]) ?? 3);
                     break;
                 case "type":
+                    if (UiTree.FocusIsPassword())
+                        throw new InvalidOperationException($"step {n}: that's a password box. Otto never types passwords; ask the user to sign in themselves.");
                     await TypeText(step["text"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'type' needs 'text'"), ct);
                     break;
                 case "key":
+                    // Enter or Space on a focused Buy / Delete button clicks it just the same
+                    if (!approved && (step["keys"]?.GetValue<string>() ?? "").Trim().ToLowerInvariant() is "enter" or "return" or "space"
+                        && UiTree.FocusedLabel() is string focused && Safety.IsConsequential(focused))
+                    {
+                        if (!confirm($"Press {step["keys"]} on \"{focused.Trim().Clip(80)}\"? It looks like it pays, signs, submits or deletes something."))
+                            return JsonValue.Create(Declined)!;
+                        approved = true;
+                    }
                     PressCombo(step["keys"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'key' needs 'keys'"));
                     break;
                 case "wait":
@@ -210,6 +233,7 @@ static partial class Desktop
     static JsonNode Observe(string observe, CancellationToken ct)
     {
         if (observe == "none") return JsonValue.Create("Done.")!;
+        if (UiTree.ShowsOutsideContent(Win32.Foreground())) Safety.Saw("screen");
         if (observe == "ui")
         {
             var (text, count) = UiTree.Describe(ToShot, ct);

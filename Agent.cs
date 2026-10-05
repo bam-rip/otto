@@ -101,6 +101,7 @@ sealed class Agent
         cfg = now;
         if (Providers.Problem(cfg) is string problem) throw new InvalidOperationException(problem);
         Desktop.NewTurn();
+        Safety.NewTurn();
         smartBlocked = false;
         if (lastContext > SummariseAbove)
         {
