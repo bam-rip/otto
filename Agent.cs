@@ -162,47 +162,7 @@ sealed class Agent
                         // already shown word by word while streaming
                         if ((OnStream == null || !animating) && !string.IsNullOrWhiteSpace(text)) OnText(text);
                     }
-                    else if (type == "tool_use")
-                    {
-                        var name = block["name"]!.GetValue<string>();
-                        var input = block["input"]!;
-                        string label;
-                        try { label = Tools.Describe(name, input); } catch { label = name; }
-                        OnTool(label);
-                        JsonNode output;
-                        bool isError = false;
-                        try
-                        {
-                            if (Unattended && AttendedOnly.Contains(name))
-                                output = "That isn't available in a scheduled task. Finish what you can and say what's left for the user.";
-                            else if (name == "escalate")
-                            {
-                                output = smartBlocked ? "The stronger model is over its usage limit right now. Carry on with this one."
-                                    : smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
-                                if (!smartBlocked) smart = true;
-                            }
-                            else if (name == "run_routine")
-                            {
-                                OnControl(true);
-                                output = await Memory.RunRoutine(input, Confirm, OnTool, ct);
-                            }
-                            else if (name == "computer")
-                            {
-                                OnControl(true);
-                                output = await Desktop.Run(input, Confirm, ct);
-                            }
-                            else output = await Tools.Run(name, input, Confirm, ct);
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception e) { output = ErrorText(e); isError = true; }
-                        results.Add(new JsonObject
-                        {
-                            ["type"] = "tool_result",
-                            ["tool_use_id"] = block["id"]!.GetValue<string>(),
-                            ["content"] = output,
-                            ["is_error"] = isError,
-                        });
-                    }
+                    else if (type == "tool_use") results.Add(await RunToolAsync(block, ct));
                 }
 
                 // normally only "tool_use" replies have tool calls, but one cut off at max_tokens can too,
@@ -390,6 +350,50 @@ sealed class Agent
     }
 
     /// Squash everything but the last KeepTurns turns into a short summary, written by the cheap model.
+    /// Runs one tool call from the model and returns its result block. A failure becomes an error result (with
+    /// text) rather than ending the request; only a stop or cancel ends it.
+    async Task<JsonObject> RunToolAsync(JsonNode block, CancellationToken ct)
+    {
+        var name = block["name"]!.GetValue<string>();
+        var input = block["input"]!;
+        string label;
+        try { label = Tools.Describe(name, input); } catch { label = name; }
+        OnTool(label);
+        JsonNode output;
+        bool isError = false;
+        try
+        {
+            if (Unattended && AttendedOnly.Contains(name))
+                output = "That isn't available in a scheduled task. Finish what you can and say what's left for the user.";
+            else if (name == "escalate")
+            {
+                output = smartBlocked ? "The stronger model is over its usage limit right now. Carry on with this one."
+                    : smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
+                if (!smartBlocked) smart = true;
+            }
+            else if (name == "run_routine")
+            {
+                OnControl(true);
+                output = await Memory.RunRoutine(input, Confirm, OnTool, ct);
+            }
+            else if (name == "computer")
+            {
+                OnControl(true);
+                output = await Desktop.Run(input, Confirm, ct);
+            }
+            else output = await Tools.Run(name, input, Confirm, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e) { output = ErrorText(e); isError = true; }
+        return new JsonObject
+        {
+            ["type"] = "tool_result",
+            ["tool_use_id"] = block["id"]!.GetValue<string>(),
+            ["content"] = output,
+            ["is_error"] = isError,
+        };
+    }
+
     /// What a failed tool reports. Never empty: the API rejects an error result with no text, which used to
     /// turn one odd exception into a failed request.
     internal static string ErrorText(Exception e)

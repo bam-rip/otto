@@ -138,7 +138,11 @@ It's plain C# / WinForms on .NET 8, with no UI framework. Some useful entry poin
 | `Llm.cs` | Anthropic and OpenAI-compatible streaming connectors |
 | `Desktop.cs`, `Input.cs`, `UiTree.cs` | Screenshots, mouse and keyboard, and reading windows as text |
 | `Tools.cs`, `Apps.cs`, `Graph.cs`, `Memory.cs` | The tools Otto can call |
-| `ChatPanel.cs`, `ChatView.cs`, `Overlay.cs` | The panel and the glow |
+| `ChatPanel.cs`, `ChatView.cs`, `HistoryView.cs`, `Overlay.cs` | The panel, chat history and the glow |
+| `TrayApp.cs` | Wires it all together: tray icon, hotkeys, updates, reminders |
+| `Safety.cs`, `Blocklist.cs`, `Spending.cs` | The checks that don't rely on the AI behaving |
+| `SettingsWindow.cs`, `SettingsSidebar.cs`, `UiKit.cs` | The settings window and its building blocks |
+| `CommandLine.cs` | The developer switches below, one small method each |
 
 Debug switches (none of them use API credits, except `--api-test`). Release builds ignore them unless the `OTTO_DEV` environment variable is `1`, because they run tools with no one watching:
 
