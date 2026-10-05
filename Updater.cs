@@ -104,7 +104,7 @@ static class Updater
     /// Downloads the release, puts the new Otto.exe in place of this one, and starts it. The caller then quits.
     /// The running exe can't be overwritten but can be renamed, so: rename ours to Otto.old.exe, move the new
     /// one in, start it; it deletes Otto.old.exe once we've gone.
-    public static async Task InstallAsync(Release r, IProgress<string>? progress = null)
+    public static async Task InstallAsync(Release r, IProgress<string>? progress = null, Action? swapped = null)
     {
         var exe = Environment.ProcessPath ?? throw new InvalidOperationException("Can't tell where Otto is installed.");
         var dir = Path.GetDirectoryName(exe)!;
@@ -132,6 +132,7 @@ static class Updater
         File.Move(exe, old);
         try { File.Move(fresh, exe); }
         catch { File.Move(old, exe); throw; } // put ourselves back if the swap fails
+        swapped?.Invoke();
 
         try { Directory.Delete(work, true); } catch { }
         Process.Start(new ProcessStartInfo(exe, "--updated --show") { UseShellExecute = false, WorkingDirectory = dir });
@@ -215,12 +216,22 @@ static class Updater
         }
     }
 
+    /// True for the published single-file build: its code isn't in a separate Otto.dll on disk.
+    static bool IsSingleFile => string.IsNullOrEmpty(typeof(Updater).Assembly.Location);
+
     /// First thing after an update: remove the previous exe (we couldn't delete it while it was running).
     public static void CleanUpAfterUpdate()
     {
         var exe = Environment.ProcessPath;
-        if (exe == null) return;
-        var old = Path.Combine(Path.GetDirectoryName(exe)!, "Otto.old.exe");
+        if (exe == null || !exe.EndsWith("Otto.exe", StringComparison.OrdinalIgnoreCase)) return;
+        var dir = Path.GetDirectoryName(exe)!;
+        // A single-file Otto.exe needs nothing beside it. Files left by the old build-from-source installer
+        // (Otto.dll, .deps.json, .runtimeconfig.json) would only confuse which code runs, so they go, but only
+        // when this exe really is the self-contained one (it then has no Otto.dll of its own to load).
+        if (IsSingleFile)
+            foreach (var stale in new[] { "Otto.dll", "Otto.deps.json", "Otto.runtimeconfig.json", "Otto.pdb" })
+                try { File.Delete(Path.Combine(dir, stale)); } catch { }
+        var old = Path.Combine(dir, "Otto.old.exe");
         for (int i = 0; i < 20 && File.Exists(old); i++)
         {
             try { File.Delete(old); }

@@ -7,7 +7,7 @@ static class Program
 {
     static bool WaitForMutex(Mutex m)
     {
-        try { return m.WaitOne(TimeSpan.FromSeconds(15)); }
+        try { return m.WaitOne(TimeSpan.FromSeconds(60)); }
         catch (AbandonedMutexException) { return true; } // the old copy exited without releasing it: ours now
     }
 
@@ -194,7 +194,7 @@ static class Program
         bool updated = Environment.GetCommandLineArgs().Contains("--updated");
         // right after an update the previous copy is still closing: wait for it instead of quitting
         if (!first && !(updated && WaitForMutex(mutex))) return;
-        if (updated) Updater.CleanUpAfterUpdate();
+        Updater.CleanUpAfterUpdate();
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayApp());
     }
@@ -391,6 +391,8 @@ sealed class TrayApp : ApplicationContext
     async void Run(string text)
     {
         if (cts != null) { panel.AddSystem("Still working on the last request. Stop it first (Ctrl+Alt+End) or wait."); return; }
+        // Otto's own program file is being replaced: anything started now would run half old, half new
+        if (installing) { panel.AddSystem("Updating Otto. Ask again in a few seconds, once it has restarted."); return; }
         lastReply = null;
         if (Providers.Problem(Providers.Current()) is string problem) { panel.AddSystem(problem); return; }
         var attached = panel.TakeAttachments();
@@ -462,21 +464,37 @@ sealed class TrayApp : ApplicationContext
         if (updateItem != null) { updateItem.Text = r == null ? "Update" : $"Update to {r.Version}"; updateItem.Visible = r != null; }
     }
 
+    bool installing;
+
     async void InstallUpdate()
     {
         var r = pendingUpdate;
-        if (r == null) return;
+        if (r == null || installing) return;
         if (cts != null) { panel.AddSystem("I'll be ready to update once this task finishes."); return; }
+        installing = true;
+        bool swapped = false;
         try
         {
-            await Updater.InstallAsync(r, new Progress<string>(s => panel.SetUpdate($"Otto {r.Version}: {s}")));
-            ExitThread(); // the new copy is starting and waits for this one to close
+            await Updater.InstallAsync(r, new Progress<string>(s => panel.SetUpdate($"Otto {r.Version}: {s}")), () => swapped = true);
         }
         catch (Exception e)
         {
-            panel.SetUpdate($"Otto {r.Version} is out");
-            panel.AddSystem("Couldn't update: " + e.Message);
+            installing = false;
+            if (!swapped)
+            {
+                panel.SetUpdate($"Otto {r.Version} is out");
+                panel.AddSystem("Couldn't update: " + Agent.ErrorText(e));
+                return;
+            }
+            // the new Otto.exe is in place but didn't start: quitting is still right, it starts at next sign-in
+            // (or from the Start menu)
         }
+        // The new copy is starting and waits for this one to close. This copy's program file has been swapped
+        // out from under it, so it must not linger: close normally, and if anything holds that up, end the process.
+        var hardStop = new System.Threading.Timer(_ => Environment.Exit(0), null, 5000, Timeout.Infinite);
+        try { ExitThread(); }
+        catch { Environment.Exit(0); }
+        GC.KeepAlive(hardStop);
     }
 
     void ResetCounter() { chatCost = 0; chatTokens = 0; chatCached = 0; costKnown = true; panel.SetCost(""); }

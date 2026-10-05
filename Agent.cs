@@ -186,7 +186,7 @@ sealed class Agent
                             else output = await Tools.Run(name, input, Confirm, ct);
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch (Exception e) { output = e.Message; isError = true; }
+                        catch (Exception e) { output = ErrorText(e); isError = true; }
                         results.Add(new JsonObject
                         {
                             ["type"] = "tool_result",
@@ -357,6 +357,15 @@ sealed class Agent
     }
 
     /// Squash everything but the last KeepTurns turns into a short summary, written by the cheap model.
+    /// What a failed tool reports. Never empty: the API rejects an error result with no text, which used to
+    /// turn one odd exception into a failed request.
+    internal static string ErrorText(Exception e)
+    {
+        var inner = e is AggregateException or System.Reflection.TargetInvocationException or TypeInitializationException
+            ? e.InnerException ?? e : e;
+        return string.IsNullOrWhiteSpace(inner.Message) ? $"The tool failed ({inner.GetType().Name})." : inner.Message;
+    }
+
     async Task SummariseOlderTurns(CancellationToken ct)
     {
         var starts = Enumerable.Range(0, messages.Count).Where(i => IsTurnStart(messages[i]!)).ToList();

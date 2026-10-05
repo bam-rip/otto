@@ -187,3 +187,16 @@ public class SafetyTests
         Assert.False(Updater.Verify(zip, new byte[] { 9, 9 }, pub)); // junk signature
     }
 }
+
+public class ToolErrorTests
+{
+    sealed class Blank : Exception { public override string Message => ""; }
+
+    [Fact]
+    public void A_failed_tool_never_reports_an_empty_error()
+    {
+        Assert.Equal("The tool failed (Blank).", Agent.ErrorText(new Blank()));
+        Assert.Equal("disk full", Agent.ErrorText(new AggregateException(new IOException("disk full"))));
+        Assert.Equal("The tool failed (Blank).", Agent.ErrorText(new TypeInitializationException("Otto.Tools", new Blank())));
+    }
+}
