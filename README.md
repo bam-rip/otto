@@ -25,6 +25,12 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Attachments.** Drag files onto the panel, or paste a screenshot with Ctrl+V. Otto sees images and works with files by their path.
 - **Updates.** Once a day Otto quietly checks for a new release. If there is one, a small bar in the panel offers to update: one click downloads it and restarts Otto, keeping your settings, keys and chats. You can turn the check off in settings.
 - **Stop and pin.** While Otto has control, a Stop button sits beside the banner. The pin icon keeps the panel open when you click elsewhere.
+- **Ask about anything on screen.** Select text in any app and press Ctrl+Alt+A: it lands in Otto's panel, ready for your question. With nothing selected, Otto gets a picture of the window instead.
+- **Quick actions.** Save requests you make often ("Morning briefing") as one-click buttons on the start screen and in the tray menu.
+- **Export chats** as a Word document, text or Markdown (right-click in the chat).
+- **A spending limit.** Set a monthly limit: Otto warns you at 80% and stops at the limit, even partway through a task.
+- **Places Otto must never touch.** List websites or apps (your bank, a work app) and Otto won't open, read or click in them.
+- **Your look.** Dark or light, the panel on the left or right, and four text sizes.
 - **Pick your AI.** It works with Anthropic (Claude, the default and the most tested), OpenAI, Google Gemini, xAI Grok, DeepSeek, OpenRouter, or a local model through Ollama or LM Studio. You can save several keys per provider, and Otto moves to the next one by itself when a key runs out of quota.
 
 ## Requirements
@@ -56,7 +62,7 @@ You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://
 | Ctrl+Alt+A | Ask about this: what you've selected in any app (or a picture of the window) goes into the panel |
 | Ctrl+Alt+End | **Stop everything immediately** |
 
-The gear icon opens the settings: AI provider and key, models, email sign-in, reply animation and read-aloud.
+The gear icon opens the settings, in sections: AI, email and calendar, look and feel, chat and voice, quick actions, reminders, spending, privacy and safety, and updates.
 
 Otto asks before anything with real consequences: buying or paying, signing something, submitting a formal document, sending an email, permanently deleting files, or running PowerShell that deletes things or changes Windows itself. Everything else, it just does. If it overwrites a file, the old version is backed up first.
 

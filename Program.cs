@@ -243,7 +243,8 @@ static class Program
         if (Environment.GetCommandLineArgs().Contains("--settings"))
         {
             ApplicationConfiguration.Initialize();
-            SettingsWindow.Show();
+            int si = Array.IndexOf(Environment.GetCommandLineArgs(), "--settings");
+            SettingsWindow.Show(Environment.GetCommandLineArgs().ElementAtOrDefault(si + 1)); // optional section name, e.g. "Spending"
             return;
         }
         // Otto.exe --render-ui → the chat (hovering a wide bubble) and the history list drawn offscreen,
@@ -423,6 +424,9 @@ sealed class TrayApp : ApplicationContext
             panel.ShowPanel();
         };
         QuickActions.Changed += panel.RefreshSuggestions;
+        SettingsWindow.UpdateFound = ShowUpdate;
+        SettingsWindow.WelcomeRequested = ShowWelcome;
+        SettingsWindow.UninstallDone = ExitThread;
         scheduleTimer.Tick += (_, _) => RunDue();
         scheduleTimer.Start();
         panel.BeginInvoke(RunDue); // anything that came due while Otto was off
@@ -460,7 +464,7 @@ sealed class TrayApp : ApplicationContext
     {
         var m = new ContextMenuStrip();
         m.Items.Add("Open", null, (_, _) => panel.ShowPanel());
-        m.Items.Add("Settings (AI provider, key)…", null, (_, _) => SettingsWindow.Show());
+        m.Items.Add("Settings…", null, (_, _) => SettingsWindow.Show());
         var quick = new ToolStripMenuItem("Quick actions");
         quick.DropDownItems.Add("(none yet)"); // filled each time it opens
         quick.DropDownOpening += (_, _) =>
