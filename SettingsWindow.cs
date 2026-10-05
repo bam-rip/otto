@@ -302,7 +302,14 @@ static partial class SettingsWindow
 
         void BuildMail(FlowLayoutPanel p)
         {
-            // Gmail and others
+            BuildOtherEmail(p);
+            BuildCalendarLink(p);
+            BuildOutlook(p);
+        }
+
+        /// Gmail, Yahoo, iCloud and the rest, over IMAP with an app password.
+        void BuildOtherEmail(FlowLayoutPanel p)
+        {
             var card = Ui.Card(p, "Gmail, Yahoo, iCloud and others", "Otto reads, searches and drafts email, and always asks before sending.");
             card.Controls.Add(Ui.Caption("Email address"));
             var address = Ui.TextBox(W - 40, Imap.Address, "you@gmail.com");
@@ -375,8 +382,11 @@ static partial class SettingsWindow
                 }
                 finally { if (!connect.IsDisposed) connect.Enabled = true; }
             };
+        }
 
-            // calendar link
+        /// A read-only calendar from its private iCal link.
+        void BuildCalendarLink(FlowLayoutPanel p)
+        {
             var cal = Ui.Card(p, "Calendar", "Paste your calendar's private iCal link and Otto can answer \"what's on tomorrow?\". Read-only.");
             var calRow = Ui.Row();
             var link = Ui.TextBox(W - 170, password: true);
@@ -422,8 +432,11 @@ static partial class SettingsWindow
                 }
                 finally { if (!calSave.IsDisposed) calSave.Enabled = true; }
             };
+        }
 
-            // Outlook
+        /// Outlook, Hotmail and Microsoft 365 through Microsoft Graph (needs the user's own app registration).
+        void BuildOutlook(FlowLayoutPanel p)
+        {
             var o = Ui.Card(p, "Outlook, Hotmail and Microsoft 365", "Email and calendar (including adding events) through Microsoft. Needs a free Microsoft app registration.");
             var oRow = Ui.Row();
             var clientId = Ui.TextBox(W - 170, Graph.ClientId, "App client ID, e.g. 1a2b3c4d-....");
