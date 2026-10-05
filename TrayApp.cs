@@ -190,6 +190,7 @@ sealed class TrayApp : ApplicationContext
     /// Quick actions, settings links, and the reminder/scheduled-task clock.
     void ConnectFeatures()
     {
+        _ = Task.Run(ChatStore.List); // read the history once in the background, so opening it first time is instant too
         QuickActions.Changed += panel.RefreshSuggestions;
         SettingsWindow.UpdateFound = ShowUpdate;
         SettingsWindow.WelcomeRequested = ShowWelcome;

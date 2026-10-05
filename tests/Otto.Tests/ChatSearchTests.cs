@@ -58,3 +58,29 @@ public class ChatEncryptionTests
         Assert.True(plain);
     }
 }
+
+[Collection("Data folder")]
+public class ChatListCacheTests
+{
+    [Fact]
+    public void History_shows_changes_and_deletions_even_though_summaries_are_cached()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "otto-cache-" + Guid.NewGuid().ToString("N"));
+        var old = Paths.Data; Paths.Data = dir;
+        try
+        {
+            System.Text.Json.Nodes.JsonArray Chat(string text) => new() { new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = text } };
+            ChatStore.Save("a", Chat("first title"));
+            ChatStore.Save("b", Chat("other chat"));
+            Assert.Equal(new[] { "other chat", "first title" }, ChatStore.List().Select(c => c.Title));
+
+            Thread.Sleep(20); // a different write time
+            ChatStore.Save("a", Chat("renamed after more messages"));
+            Assert.Contains(ChatStore.List(), c => c.Title == "renamed after more messages");
+
+            ChatStore.Delete("b");
+            Assert.Equal(new[] { "renamed after more messages" }, ChatStore.List().Select(c => c.Title));
+        }
+        finally { Paths.Data = old; Directory.Delete(dir, true); }
+    }
+}

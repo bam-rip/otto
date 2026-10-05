@@ -83,21 +83,39 @@ static class ChatStore
         catch { /* history is a convenience; never break a request over it */ }
     }
 
+    /// Summaries already read, by file, with the file's write time and size: opening history only decrypts and parses
+    /// chats that changed since (100 chats took ~135 ms every time; now a few ms after the first).
+    static readonly Dictionary<string, (DateTime written, long size, Summary summary)> summaries = new();
+
     public static List<Summary> List()
     {
         var list = new List<Summary>();
         if (!Directory.Exists(Dir)) return list;
-        foreach (var f in new DirectoryInfo(Dir).GetFiles("*.json").OrderByDescending(f => f.Name))
+        lock (summaries)
         {
-            try
+            var seen = new HashSet<string>();
+            foreach (var f in new DirectoryInfo(Dir).GetFiles("*.json").OrderByDescending(f => f.Name))
             {
-                var j = JsonNode.Parse(Read(f.FullName))!;
-                list.Add(new Summary(Path.GetFileNameWithoutExtension(f.Name), j["title"]?.ToString() ?? "(chat)",
-                    j["preview"]?.ToString() ?? "",
-                    DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime,
-                    j["messages"] is JsonArray msgs ? SearchText(msgs) : ""));
+                seen.Add(f.FullName);
+                if (summaries.TryGetValue(f.FullName, out var known) && known.written == f.LastWriteTimeUtc && known.size == f.Length)
+                {
+                    list.Add(known.summary);
+                    continue;
+                }
+                try
+                {
+                    var j = JsonNode.Parse(Read(f.FullName))!;
+                    var summary = new Summary(Path.GetFileNameWithoutExtension(f.Name), j["title"]?.ToString() ?? "(chat)",
+                        j["preview"]?.ToString() ?? "",
+                        DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime,
+                        j["messages"] is JsonArray msgs ? SearchText(msgs) : "");
+                    f.Refresh(); // Read() may have just re-saved an older plain chat encrypted
+                    summaries[f.FullName] = (f.LastWriteTimeUtc, f.Length, summary);
+                    list.Add(summary);
+                }
+                catch { }
             }
-            catch { }
+            foreach (var gone in summaries.Keys.Where(k => !seen.Contains(k)).ToList()) summaries.Remove(gone);
         }
         return list;
     }
