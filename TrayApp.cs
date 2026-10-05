@@ -501,9 +501,10 @@ sealed class TrayApp : ApplicationContext
         var id = ChatStore.NewId();
         try
         {
-            await a.RunAsync($"(Scheduled task{(job.late ? ", running late because the PC was off" : "")}. Nobody is watching: you can't use the screen, " +
-                             $"and anything that needs the user's OK will be declined, so finish what you can and say what's left.)\n\n{job.item.Text}",
-                             stop.Token);
+            // off the UI thread, like your own requests, so a big page or file in the task can't freeze the panel
+            var request = $"(Scheduled task{(job.late ? ", running late because the PC was off" : "")}. Nobody is watching: you can't use the screen, " +
+                          $"and anything that needs the user's OK will be declined, so finish what you can and say what's left.)\n\n{job.item.Text}";
+            await Task.Run(() => a.RunAsync(request, stop.Token));
         }
         catch (Exception e) { said.AppendLine("It didn't finish: " + Agent.ErrorText(e)); }
         ChatStore.Save(id, a.Snapshot());

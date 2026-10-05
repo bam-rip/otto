@@ -61,6 +61,8 @@ a browser or mail window on screen), these ask you first until your next message
 | 25 | High | **Blocked places could be reached through PowerShell.** `open`, `fetch_page` and screen control checked the "never touch" list, but a command like `Invoke-WebRequest commbank.com.au` didn't. | Commands naming a blocked site or app are refused too. |
 | 26 | Medium | **Ctrl+Alt+A could stop a running program.** With nothing selected it presses Ctrl+C to copy, which in a terminal interrupts whatever is running. | Never pressed in a console; Otto takes a picture of the window instead. |
 | 27 | Low | **A scheduled task was dropped silently** when no AI was set up at the time it came due. | You get a notification saying it was skipped and why. |
+| 28 | Medium | **A hostile web page or email could freeze a task.** Stripping HTML used a pattern that re-scanned to the end of the page for every unclosed `<script>`; 180 KB of them took 17 seconds, a 3 MB page hours. (1.3.2) | Rewritten as a single pass with the same output (checked on 5000 random pages), and every pattern Otto runs now has a 5-second limit. |
+| 29 | Medium | **"Load model list" could send an API key over plain http** to a custom server; requests were checked but this button wasn't. (1.3.2) | The same check now covers it. |
 
 How the newer features stay safe:
 - **Scheduled tasks** run without screen control and can't save notes, routines or more schedules; anything that needs your OK is declined and reported. Creating a schedule asks first after Otto has read untrusted content, so a web page can't plant a recurring job.
