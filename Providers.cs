@@ -8,11 +8,79 @@ sealed record Provider(string Id, string Label, string BaseUrl, string Fast, str
 {
     public bool IsAnthropic => Id == "anthropic";
     public bool NeedsKey => Id != "custom";
-    /// Credential Manager entry. Anthropic keeps the original "Otto" entry so existing installs keep working.
+    /// Credential Manager entry for key slot 0. Anthropic keeps the original "Otto" entry so existing installs keep working.
     public string KeyTarget => IsAnthropic ? "Otto" : "Otto:" + Id;
+    /// Slot 0 is the original entry; extra keys are "<target>#<slot>".
+    public string KeyTargetFor(int slot) => slot == 0 ? KeyTarget : $"{KeyTarget}#{slot}";
     /// An environment variable that overrides the saved key (developer convenience; Claude only).
     public string? KeyEnvVar => IsAnthropic ? "ANTHROPIC_API_KEY" : null;
-    public string? SavedKey() => KeyStore.ApiKey(KeyTarget, KeyEnvVar);
+    /// The key in use: the env override, else the active saved key.
+    public string? SavedKey() => KeyStore.ApiKey(KeyTargetFor(KeyRing.Active(this)), KeyEnvVar);
+}
+
+/// Several saved keys per provider (say a personal and a work key, or two free-tier keys). The keys live in
+/// Credential Manager; which slots exist, their names, and the active one live in the registry.
+static class KeyRing
+{
+    public sealed record Entry(int Slot, string Label, string Hint);
+
+    public static List<Entry> List(Provider p)
+    {
+        var list = new List<Entry>();
+        foreach (var slot in Slots(p))
+        {
+            var key = KeyStore.ApiKey(p.KeyTargetFor(slot), null);
+            if (key == null) continue; // removed outside Otto
+            list.Add(new(slot, Providers.Get(p, $"keylabel.{slot}", $"Key {slot + 1}"), Mask(key)));
+        }
+        return list;
+    }
+
+    /// "…a1b2": enough to tell keys apart without showing them.
+    public static string Mask(string key) => key.Length <= 8 ? "…" : "…" + key[^4..];
+
+    static IEnumerable<int> Slots(Provider p)
+    {
+        foreach (var part in Providers.Get(p, "keyslots", "0").Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (int.TryParse(part, out var n)) yield return n;
+    }
+
+    static void SetSlots(Provider p, IEnumerable<int> slots) => Providers.Set(p, "keyslots", string.Join(",", slots));
+
+    public static int Active(Provider p) => int.TryParse(Providers.Get(p, "activekey", "0"), out var n) ? n : 0;
+    public static void SetActive(Provider p, int slot) => Providers.Set(p, "activekey", slot.ToString());
+
+    public static int Add(Provider p, string label, string key)
+    {
+        var slots = Slots(p).ToList();
+        // slot 0 is empty on a fresh install; fill it first so single-key setups stay as before
+        int slot = KeyStore.ApiKey(p.KeyTarget, null) == null ? 0 : Enumerable.Range(1, 99).First(n => !slots.Contains(n));
+        KeyStore.Save(key, p.KeyTargetFor(slot));
+        if (!slots.Contains(slot)) slots.Add(slot);
+        SetSlots(p, slots);
+        Providers.Set(p, $"keylabel.{slot}", label.Length > 0 ? label : $"Key {slot + 1}");
+        if (List(p).Count == 1) SetActive(p, slot);
+        return slot;
+    }
+
+    public static void Remove(Provider p, int slot)
+    {
+        KeyStore.Delete(p.KeyTargetFor(slot));
+        SetSlots(p, Slots(p).Where(s => s != slot));
+        if (Active(p) == slot && List(p).FirstOrDefault() is Entry next) SetActive(p, next.Slot);
+    }
+
+    /// Move to the saved key after the active one. False when there's no other key.
+    public static bool Next(Provider p, out Entry? now)
+    {
+        var list = List(p);
+        now = null;
+        if (list.Count < 2) return false;
+        int i = list.FindIndex(e => e.Slot == Active(p));
+        now = list[(i + 1) % list.Count];
+        SetActive(p, now.Slot);
+        return true;
+    }
 }
 
 /// The settings in effect for one request.
@@ -112,12 +180,15 @@ static class SettingsWindow
         provider.Items.AddRange(Providers.All.Select(p => (object)p.Label).ToArray());
         Add(provider);
 
-        Add(Caption("API key (stored in Windows Credential Manager)"));
+        Add(Caption("API key in use (keys are stored in Windows Credential Manager)"));
         var keyRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        var key = new TextBox { UseSystemPasswordChar = true, Width = W - 90 };
-        var getKey = new LinkLabel { Text = "Get a key", AutoSize = true, Margin = new Padding(12, 6, 0, 0) };
-        keyRow.Controls.AddRange(new Control[] { key, getKey });
+        var keys = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = W - 250 };
+        var addKey = new Button { Text = "Add key…", AutoSize = true, Padding = new Padding(6, 0, 6, 0), Margin = new Padding(8, 0, 0, 0) };
+        var removeKey = new Button { Text = "Remove", AutoSize = true, Padding = new Padding(6, 0, 6, 0), Margin = new Padding(6, 0, 0, 0) };
+        var getKey = new LinkLabel { Text = "Get a key", AutoSize = true, Margin = new Padding(10, 6, 0, 0) };
+        keyRow.Controls.AddRange(new Control[] { keys, addKey, removeKey, getKey });
         Add(keyRow);
+        Add(Hint("Save more than one key and Otto moves to the next one by itself when a key runs out of quota."));
 
         Add(Caption("Server address"));
         var baseUrl = new TextBox { Width = W };
@@ -220,12 +291,36 @@ static class SettingsWindow
         f.CancelButton = cancel;
 
         Provider P() => Providers.All[Math.Max(0, provider.SelectedIndex)];
+        List<KeyRing.Entry> keyList = new();
+        KeyRing.Entry? SelectedKey() => keys.SelectedIndex >= 0 && keys.SelectedIndex < keyList.Count ? keyList[keys.SelectedIndex] : null;
+        void FillKeys(int? select = null)
+        {
+            var p = P();
+            keyList = KeyRing.List(p);
+            keys.Items.Clear();
+            foreach (var e in keyList) keys.Items.Add($"{e.Label}  ({e.Hint})");
+            if (keyList.Count == 0) keys.Items.Add(p.NeedsKey ? "No key yet. Click Add key." : "None (optional for local servers)");
+            int want = select ?? KeyRing.Active(p);
+            keys.SelectedIndex = Math.Max(0, keyList.FindIndex(e => e.Slot == want));
+            removeKey.Enabled = keyList.Count > 0;
+        }
+        addKey.Click += (_, _) =>
+        {
+            if (KeyPrompt.Ask(f, P().Label, keyList.Count + 1) is not var (label, value)) return;
+            FillKeys(KeyRing.Add(P(), label, value));
+        };
+        removeKey.Click += (_, _) =>
+        {
+            if (SelectedKey() is not KeyRing.Entry e) return;
+            if (MessageBox.Show(f, $"Remove the key \"{e.Label}\" ({e.Hint}) from Otto?", "Remove key",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            KeyRing.Remove(P(), e.Slot);
+            FillKeys();
+        };
         void Fill()
         {
             var p = P();
-            bool hasKey = p.SavedKey() != null;
-            key.Text = "";
-            key.PlaceholderText = hasKey ? "Saved. Leave blank to keep it." : p.NeedsKey ? "Paste your key" : "Optional for local servers";
+            FillKeys();
             getKey.Visible = p.KeyUrl.Length > 0;
             baseUrl.Text = Providers.Get(p, "baseurl", p.BaseUrl);
             baseUrl.ReadOnly = p.Id != "custom";
@@ -243,7 +338,7 @@ static class SettingsWindow
         load.Click += async (_, _) =>
         {
             var p = P();
-            var k = key.Text.Trim().Length > 0 ? key.Text.Trim() : p.SavedKey();
+            var k = SelectedKey() is KeyRing.Entry e ? KeyStore.ApiKey(p.KeyTargetFor(e.Slot), p.KeyEnvVar) : p.SavedKey();
             status.Text = "Loading…";
             try
             {
@@ -253,13 +348,13 @@ static class SettingsWindow
                 smart.Items.AddRange(list.Cast<object>().ToArray());
                 status.Text = $"{list.Count} models. Pick from the dropdowns.";
             }
-            catch (Exception e) { status.Text = "Couldn't load: " + e.Message.Clip(60); }
+            catch (Exception ex) { status.Text = "Couldn't load: " + ex.Message.Clip(60); }
         };
 
         if (f.ShowDialog() != DialogResult.OK) return;
         var chosen = P();
         Providers.Selected = chosen;
-        if (key.Text.Trim().Length > 0) KeyStore.Save(key.Text.Trim(), chosen.KeyTarget);
+        if (SelectedKey() is KeyRing.Entry active) KeyRing.SetActive(chosen, active.Slot);
         if (chosen.Id == "custom") Providers.Set(chosen, "baseurl", baseUrl.Text.Trim());
         Providers.Set(chosen, "fast", fast.Text.Trim());
         Providers.Set(chosen, "smart", smart.Text.Trim().Length > 0 ? smart.Text.Trim() : fast.Text.Trim());
@@ -292,5 +387,46 @@ static class Prefs
     {
         using var k = Registry.CurrentUser.CreateSubKey(Key);
         k.SetValue(name, on ? 1 : 0);
+    }
+}
+
+/// Small dialog for adding a key: a name to tell it apart, and the key itself.
+static class KeyPrompt
+{
+    public static (string Label, string Key)? Ask(IWin32Window owner, string providerLabel, int number)
+    {
+        using var f = new Form
+        {
+            Text = "Add a key for " + providerLabel,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ShowInTaskbar = false,
+            TopMost = true,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Font = new Font("Segoe UI", 9.5f),
+            Padding = new Padding(14),
+        };
+        var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
+        f.Controls.Add(grid);
+        grid.Controls.Add(new Label { Text = "Name (so you can tell your keys apart)", AutoSize = true, Margin = new Padding(0, 0, 0, 4) });
+        var name = new TextBox { Width = 380, Text = $"Key {number}" };
+        grid.Controls.Add(name);
+        grid.Controls.Add(new Label { Text = "API key", AutoSize = true, Margin = new Padding(0, 12, 0, 4) });
+        var key = new TextBox { Width = 380, UseSystemPasswordChar = true, PlaceholderText = "Paste your key" };
+        grid.Controls.Add(key);
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Size = new Size(380, 40), Margin = new Padding(0, 16, 0, 0) };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+        var ok = new Button { Text = "Add", DialogResult = DialogResult.OK, AutoSize = true, Enabled = false };
+        key.TextChanged += (_, _) => ok.Enabled = key.Text.Trim().Length > 0;
+        buttons.Controls.AddRange(new Control[] { cancel, ok });
+        grid.Controls.Add(buttons);
+        f.AcceptButton = ok;
+        f.CancelButton = cancel;
+        f.Shown += (_, _) => key.Focus();
+        if (f.ShowDialog(owner) != DialogResult.OK || key.Text.Trim().Length == 0) return null;
+        return (name.Text.Trim(), key.Text.Trim());
     }
 }

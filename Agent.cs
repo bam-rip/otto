@@ -323,7 +323,25 @@ sealed class Agent
 
     string Model => smart && cfg.Smart.Length > 0 ? cfg.Smart : cfg.Fast;
 
-    Task<JsonNode> CallAsync(CancellationToken ct)
+    /// CallAsync, but when the key in use is out of quota or refused, move to the provider's next saved key
+    /// and try again, until every key has had a go.
+    async Task<JsonNode> CallAsync(CancellationToken ct)
+    {
+        int keys = cfg.Provider.KeyEnvVar is string env && Environment.GetEnvironmentVariable(env) is { Length: > 0 }
+            ? 1 : KeyRing.List(cfg.Provider).Count; // an env override key can't be rotated
+        for (int tried = 1; ; tried++)
+        {
+            try { return await CallOnceAsync(ct); }
+            catch (ApiException e) when (e.Status is 401 or 403 or 429 && tried < keys)
+            {
+                if (!KeyRing.Next(cfg.Provider, out var next)) throw;
+                cfg = Providers.Current();
+                OnTool(e.Status == 429 ? $"That key is over its limit, switching to {next!.Label}" : $"That key was refused, switching to {next!.Label}");
+            }
+        }
+    }
+
+    Task<JsonNode> CallOnceAsync(CancellationToken ct)
     {
         var tools = Tools.Definitions().AsArray();
         // always listed (even on the bigger model) so earlier escalate calls in the history still match a tool
