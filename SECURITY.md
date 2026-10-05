@@ -1,7 +1,7 @@
 # Security
 
 Otto controls a real PC, so its security matters more than most apps'. This page lists what a review of the whole
-codebase found (October 2026, version 1.2.0), what 1.2.1 changed, and the risks that remain by design.
+codebase found (October 2026, version 1.2.0), what 1.2.1 and 1.2.2 changed, and the risks that remain by design.
 
 **Reporting a problem:** please open a private advisory on GitHub (Security → Report a vulnerability) rather than a
 public issue.
@@ -20,7 +20,7 @@ a browser or mail window on screen), these ask you first until your next message
 - running a program or script file
 - opening a web address stuffed with data (a way to smuggle information out)
 
-## Found and fixed in 1.2.1
+## Found and fixed
 
 | # | Severity | Problem | Fix |
 |---|---|---|---|
@@ -42,6 +42,18 @@ a browser or mail window on screen), these ask you first until your next message
 | 16 | Low | A crafted `.docx` (huge or zip-bomb `document.xml`) could exhaust memory; a missing part crashed the read. | Size-checked, with a clear error. |
 | 17 | Low | Update downloads had no size limit. | Capped. |
 
+### Second pass (also in 1.2.2): accidents and less obvious routes
+
+| # | Severity | Problem | Fix |
+|---|---|---|---|
+| 18 | High | **Typing into a terminal skipped every command check.** The screen tool could open Command Prompt, PowerShell or the Win+R box, type a command and press Enter, and none of the PowerShell checks applied. | Typing into a console or the Run box gets the same checks as `run_powershell`: risky commands always ask, and anything asks after untrusted content. |
+| 19 | High | **Summaries could launder planted text.** Long chats get summarised by the AI and the summary is put back as a message from you, built partly from web pages and emails. A planted "the user wants X" could come out as something you asked for. | Outside content is labelled as such in what gets summarised, the summariser is told never to present it as a request, and the summary itself says to follow only your own messages. |
+| 20 | Medium | **Undo could lose its own backups.** Only the 200 newest backups were kept, so a task that overwrote more than 200 files deleted the backups of its first changes. | Backups from the last week are never pruned. |
+| 21 | Medium | **Backups could fill the disk.** Overwriting a huge file copied it whole first. | Files over 200 MB aren't copied; overwriting one asks, saying it can't be undone. |
+| 22 | Medium | **Everyday commands that lose work ran without asking**: `Set-Content`/`Out-File` overwriting a file (no backup, unlike `write_file`), `robocopy /MIR`, `git reset --hard`/`git clean`, `winget uninstall`, force-killing apps (unsaved work), turning off network adapters, `netsh`, `powercfg`. | All ask. |
+| 23 | Medium | **No way to see what Otto remembers.** A note planted before 1.2.1 would sit in every chat unnoticed. | Settings → *What Otto remembers* opens the notes and routines to check or edit. |
+| 24 | Medium | **The release signing key was stored unprotected.** | It can be locked with a passphrase (`protect-key.ps1`); `publish.ps1` asks for it when signing. |
+
 ## Known risks that remain
 
 These are understood and accepted for now, with what would reduce them:
@@ -52,4 +64,6 @@ These are understood and accepted for now, with what would reduce them:
 4. **Same-user malware wins.** Anything already running as you can read Credential Manager, Otto's chats (stored unencrypted in `%LOCALAPPDATA%\Otto`), and replace `Otto.exe` (installed per-user, without admin). That's how per-user Windows apps work; encrypting chats with DPAPI would only help against other accounts and offline disk access.
 5. **Otto.exe isn't code-signed** (that needs a paid certificate), so Windows SmartScreen warns on first run, and the very first download can't be verified automatically. Updates after that are verified (#1).
 6. **What Otto sees goes to your AI provider**: screen text, screenshots, files and emails it reads. Use a local model if that matters.
-7. **The release signing key** lives on the maintainer's PC. If it's lost, future releases need a new key shipped in a normal (signed) update; if it's stolen, the protection in #1 is gone.
+7. **Checks that read labels can be fooled or miss things.** The Buy/Delete backstop matches English labels; an icon-only or foreign-language button, or one whose label Windows can't read in time, isn't caught. The password-box check relies on the app marking the field as a password.
+8. **The PowerShell filter is a list.** It catches common dangerous commands, not every possible one. A command it misses, typed while nothing untrusted has been read, runs without asking.
+9. **The release signing key** lives on the maintainer's PC. If it's lost, future releases need a new key shipped in a normal (signed) update; if it's stolen, the protection in #1 is gone.

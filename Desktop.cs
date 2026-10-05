@@ -132,6 +132,12 @@ static partial class Desktop
                     Scroll(step["direction"]?.GetValue<string>() ?? "down", Num(step["amount"]) ?? 3);
                     break;
                 case "type":
+                    if (IsCommandWindow(Win32.Foreground()) && step["text"]?.GetValue<string>() is string typed)
+                    {
+                        var ask = Tools.RiskyCommand.IsMatch(typed) ? $"Type this command into {Win32.Title(Win32.Foreground())}?\n\n{typed.Clip(400)}"
+                                : Safety.AskIfUntrusted($"Type this into {Win32.Title(Win32.Foreground())}:\n\n{typed.Clip(400)}");
+                        if (ask != null && !confirm(ask)) return JsonValue.Create(Declined)!;
+                    }
                     if (UiTree.FocusIsPassword())
                         throw new InvalidOperationException($"step {n}: that's a password box. Otto never types passwords; ask the user to sign in themselves.");
                     await TypeText(step["text"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'type' needs 'text'"), ct);
@@ -310,6 +316,16 @@ static partial class Desktop
 
     static Point ToShot(Point p) =>
         new((int)Math.Round((p.X - Screen.X) * Scale), (int)Math.Round((p.Y - Screen.Y) * Scale));
+
+    static readonly string[] Terminals =
+    {
+        "cmd", "powershell", "pwsh", "windowsterminal", "openconsole", "conhost", "wt", "mintty", "bash", "wsl",
+        "alacritty", "wezterm-gui", "hyper", "tabby", "putty", "kitty",
+    };
+
+    /// A console or the Win+R box: typing there runs commands, so it gets the same checks as run_powershell.
+    static bool IsCommandWindow(IntPtr h) =>
+        Terminals.Contains(Win32.ProcessName(h)) || Win32.ProcessName(h) == "explorer" && Win32.Title(h) == "Run";
 
     /// The model flags consequential steps itself. The only hard backstop is permanent delete,
     /// which skips the Recycle Bin and can't be undone.

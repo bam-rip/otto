@@ -30,6 +30,11 @@ static class Tools
         @"|\[scriptblock\]::Create|\.Invoke\s*\(|&\s*\(|&\s*\$|Add-Type\b|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}" +
         // overwriting or emptying files, and Windows' own security
         @"|\b(Clear-Item|Set-Acl|Disable-WindowsOptionalFeature|Set-NetFirewallProfile|netsh\s+advfirewall|Set-MpPreference|Stop-Service)\b" +
+        // everyday commands that lose work with no backup: overwriting files, mirror-copies that delete,
+        // throwing away git work, uninstalling, force-killing apps (unsaved work), cutting the network
+        @"|\b(Set-Content|Out-File|sc)\b(?![^;|\n]*-WhatIf)|\brobocopy\b[^;|\n]*/(MIR|PURGE)\b|\bgit\s+(clean|reset\s+--hard|push\s+(-f|--force)|checkout\s+--|restore)\b" +
+        @"|\b(winget|choco|scoop)\s+(uninstall|remove)\b|\b(Stop-Process|kill|spps)\b[^;|\n]*-Force|\btaskkill\b[^;|\n]*/F\b" +
+        @"|\b(Disable-NetAdapter|Disable-PnpDevice|Remove-NetIPAddress|netsh|powercfg|Remove-Printer)\b" +
         // network paths (\\server\share) leak the Windows sign-in to that server
         @"|(^|[\s'""(=])\\\\[A-Za-z0-9]",
         RegexOptions.IgnoreCase);
@@ -147,7 +152,10 @@ static class Tools
                 var path = Path.GetFullPath(Environment.ExpandEnvironmentVariables(S(input, "path")));
                 if (Safety.SensitiveWrite(path) is string where && !confirm($"Write to {where}?\n\n{path}")) return "User declined.";
                 // overwriting is undoable instead of asking: the old version goes to a backup first
-                var backup = File.Exists(path) ? Backup(path) : null;
+                if (File.Exists(path) && new FileInfo(path).Length > 200_000_000
+                    && !confirm($"Overwrite {path}? It's too big to back up first ({new FileInfo(path).Length / 1_000_000} MB), so this can't be undone."))
+                    return "User declined.";
+                var backup = File.Exists(path) && new FileInfo(path).Length <= 200_000_000 ? Backup(path) : null;
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 await File.WriteAllTextAsync(path, S(input, "content"), ct);
                 return backup == null ? $"Wrote {path}" : $"Wrote {path} (previous version backed up to {backup})";
@@ -192,7 +200,10 @@ static class Tools
         for (int n = 2; File.Exists(dest); n++) dest = Path.Combine(dir, $"{stamp}-{n}-{Path.GetFileName(path)}");
         File.Copy(path, dest);
         // keep the 200 newest so this can't fill the disk
-        foreach (var old in new DirectoryInfo(dir).GetFiles().OrderByDescending(f => f.CreationTimeUtc).Skip(200))
+        // past the 200 newest, drop backups older than a week; never this week's, or a task that changes many
+        // files would delete the undo for its own first changes
+        foreach (var old in new DirectoryInfo(dir).GetFiles().OrderByDescending(f => f.CreationTimeUtc).Skip(200)
+                     .Where(f => f.CreationTimeUtc < DateTime.UtcNow.AddDays(-7)))
             try { old.Delete(); } catch { }
         return dest;
     }

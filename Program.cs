@@ -160,6 +160,14 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-public-key.txt"), Updater.Signing.MakeKey());
             return;
         }
+        if (Dev && Environment.GetCommandLineArgs().Contains("--protect-signing-key"))
+        {
+            string outp;
+            try { outp = Updater.Signing.Protect() ? "protected" : "already protected"; Environment.ExitCode = 0; }
+            catch (Exception e) { outp = "ERROR " + e.Message; Environment.ExitCode = 1; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-protect-key.txt"), outp);
+            return;
+        }
         int sr = Dev ? Array.IndexOf(Environment.GetCommandLineArgs(), "--sign-release") : -1;
         if (sr >= 0)
         {

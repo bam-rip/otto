@@ -161,7 +161,8 @@ static class Updater
     /// The private key lives in %USERPROFILE%\.otto\release-key.pem, never in the repo.
     internal static class Signing
     {
-        static string KeyPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".otto", "release-key.pem");
+        static string KeyPath => Environment.GetEnvironmentVariable("OTTO_SIGNING_KEY") is { Length: > 0 } k ? k // for testing on a copy
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".otto", "release-key.pem");
 
         /// Makes the key if there isn't one; returns the public key to paste into PublicKey.
         public static string MakeKey()
@@ -173,11 +174,41 @@ static class Updater
             return Convert.ToBase64String(ec.ExportSubjectPublicKeyInfo());
         }
 
+        /// The passphrase comes from OTTO_SIGNING_PASSPHRASE, set only for the signing step by publish.ps1.
+        static string Passphrase => Environment.GetEnvironmentVariable("OTTO_SIGNING_PASSPHRASE") is { Length: >= 12 } p ? p
+            : throw new InvalidOperationException("No release key passphrase given (at least 12 characters).");
+
+        static ECDsa LoadKey()
+        {
+            var pem = File.ReadAllText(KeyPath);
+            var ec = ECDsa.Create();
+            try
+            {
+                if (pem.Contains("ENCRYPTED PRIVATE KEY")) ec.ImportFromEncryptedPem(pem, Passphrase);
+                else ec.ImportFromPem(pem);
+            }
+            catch (CryptographicException) { ec.Dispose(); throw new InvalidOperationException("Wrong release key passphrase."); }
+            return ec;
+        }
+
+        /// Re-saves an unprotected key locked with the passphrase (AES-256, 600k rounds), so a copy of the file is
+        /// useless without it. Returns false if it was already protected.
+        public static bool Protect()
+        {
+            var pem = File.ReadAllText(KeyPath);
+            if (pem.Contains("ENCRYPTED PRIVATE KEY")) return false;
+            using var ec = LoadKey();
+            var locked = ec.ExportEncryptedPkcs8PrivateKeyPem(Passphrase,
+                new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 600_000));
+            using (var check = ECDsa.Create()) check.ImportFromEncryptedPem(locked, Passphrase); // never write a file we can't read back
+            File.WriteAllText(KeyPath, locked);
+            return true;
+        }
+
         /// Writes <file>.sig next to it.
         public static void Sign(string file)
         {
-            using var ec = ECDsa.Create();
-            ec.ImportFromPem(File.ReadAllText(KeyPath));
+            using var ec = LoadKey();
             if (Convert.ToBase64String(ec.ExportSubjectPublicKeyInfo()) != PublicKey)
                 throw new InvalidOperationException("This key doesn't match the public key built into Otto.");
             File.WriteAllText(file + ".sig", Convert.ToBase64String(ec.SignData(File.ReadAllBytes(file), HashAlgorithmName.SHA256)));

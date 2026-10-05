@@ -371,6 +371,23 @@ static class SettingsWindow
         Add(readAloud);
         Add(Hint("Uses Windows' own voices. Change the voice in Windows Settings → Time & Language → Speech."));
 
+        Add(Heading("What Otto remembers"));
+        grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
+        var memoryRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        var showNotes = new Button { Text = "Notes…", AutoSize = true, Padding = new Padding(8, 2, 8, 2) };
+        var showRoutines = new Button { Text = "Routines…", AutoSize = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(8, 0, 0, 0) };
+        memoryRow.Controls.AddRange(new Control[] { showNotes, showRoutines });
+        Add(memoryRow);
+        Add(Hint("Otto reads these at the start of every chat. Check them now and then, and delete anything you didn't ask it to remember."));
+        void OpenMemory(string file)
+        {
+            var path = Path.Combine(Paths.Data, file);
+            if (!File.Exists(path)) { MessageBox.Show(f, "Nothing saved yet.", "Otto", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+            System.Diagnostics.Process.Start("notepad.exe", $"\"{path}\"");
+        }
+        showNotes.Click += (_, _) => OpenMemory("notes.txt");
+        showRoutines.Click += (_, _) => OpenMemory("routines.json");
+
         Add(Heading("Updates"));
         grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
         var updates = new CheckBox { Text = "Check for updates once a day", AutoSize = true, Checked = Prefs.CheckUpdates };

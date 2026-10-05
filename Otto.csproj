@@ -13,7 +13,7 @@
     <Authors>bam-rip</Authors>
     <Copyright>Copyright (c) 2026 bam-rip</Copyright>
     <Description>An AI assistant that operates your Windows PC</Description>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <ApplicationIcon>assets\otto.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
