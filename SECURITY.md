@@ -1,7 +1,7 @@
 # Security
 
 Otto controls a real PC, so its security matters more than most apps'. This page lists what a review of the whole
-codebase found (October 2026, version 1.2.0), what 1.2.1 and 1.2.2 changed, and the risks that remain by design.
+codebase found (October 2026, version 1.2.0), what 1.2.1, 1.2.2 and 1.3.0 changed, and the risks that remain by design.
 
 **Reporting a problem:** please open a private advisory on GitHub (Security → Report a vulnerability) rather than a
 public issue.
@@ -54,6 +54,20 @@ a browser or mail window on screen), these ask you first until your next message
 | 23 | Medium | **No way to see what Otto remembers.** A note planted before 1.2.1 would sit in every chat unnoticed. | Settings → *What Otto remembers* opens the notes and routines to check or edit. |
 | 24 | Medium | **The release signing key was stored unprotected.** | It can be locked with a passphrase (`protect-key.ps1`); `publish.ps1` asks for it when signing. |
 
+### Third pass (1.3.0): the features added since
+
+| # | Severity | Problem | Fix |
+|---|---|---|---|
+| 25 | High | **Blocked places could be reached through PowerShell.** `open`, `fetch_page` and screen control checked the "never touch" list, but a command like `Invoke-WebRequest commbank.com.au` didn't. | Commands naming a blocked site or app are refused too. |
+| 26 | Medium | **Ctrl+Alt+A could stop a running program.** With nothing selected it presses Ctrl+C to copy, which in a terminal interrupts whatever is running. | Never pressed in a console; Otto takes a picture of the window instead. |
+| 27 | Low | **A scheduled task was dropped silently** when no AI was set up at the time it came due. | You get a notification saying it was skipped and why. |
+
+How the newer features stay safe:
+- **Scheduled tasks** run without screen control and can't save notes, routines or more schedules; anything that needs your OK is declined and reported. Creating a schedule asks first after Otto has read untrusted content, so a web page can't plant a recurring job.
+- **Places Otto must never touch** are checked against the window title, the program, the browser's address bar, and any address or command Otto is about to use. The list lives in Otto's data folder, which Otto's own file tools can't change without asking.
+- **Ctrl+Alt+A** reads the selection through accessibility when the app allows; otherwise it copies and then puts your clipboard back. It takes nothing from blocked places.
+- **The spending limit** is enforced in code before each request and between steps, including for scheduled tasks.
+
 ## Known risks that remain
 
 These are understood and accepted for now, with what would reduce them:
@@ -66,4 +80,6 @@ These are understood and accepted for now, with what would reduce them:
 6. **What Otto sees goes to your AI provider**: screen text, screenshots, files and emails it reads. Use a local model if that matters.
 7. **Checks that read labels can be fooled or miss things.** The Buy/Delete backstop matches English labels; an icon-only or foreign-language button, or one whose label Windows can't read in time, isn't caught. The password-box check relies on the app marking the field as a password.
 8. **The PowerShell filter is a list.** It catches common dangerous commands, not every possible one. A command it misses, typed while nothing untrusted has been read, runs without asking.
-9. **The release signing key** lives on the maintainer's PC. If it's lost, future releases need a new key shipped in a normal (signed) update; if it's stolen, the protection in #1 is gone.
+9. **"Never touch" entries are matched as text.** A short entry like "pay" also blocks anything containing it (PayPal, "payment" in a title); a site reached by a name that doesn't contain the entry (a link shortener's redirect) is caught only once its address or title shows the entry.
+10. **The spending limit counts Claude only**, since other providers don't report prices. Set a limit in their own consoles too.
+11. **The release signing key** lives on the maintainer's PC. If it's lost, future releases need a new key shipped in a normal (signed) update; if it's stolen, the protection in #1 is gone.

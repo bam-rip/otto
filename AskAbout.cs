@@ -14,28 +14,20 @@ static class AskAbout
         var h = Win32.Foreground();
         var title = Win32.Title(h);
         if (Blocklist.Match(title, Win32.ProcessName(h)) != null) return new(null, null, title); // never take from a blocked place
-        var text = SelectedText() ?? CopiedSelection();
+        // never press Ctrl+C in a console: there it stops whatever is running instead of copying
+        var text = SelectedText() ?? (Desktop.IsCommandWindow(h) ? null : CopiedSelection());
         if (!string.IsNullOrWhiteSpace(text)) return new(text.Trim().Clip(3000), null, title);
         return new(null, WindowPicture(h, title), title);
     }
 
     /// The selection via accessibility (browsers, Word, Notepad...), which leaves the clipboard alone.
-    static string? SelectedText()
+    static string? SelectedText() => UiTree.Quick(() =>
     {
-        var work = Task.Run(() =>
-        {
-            try
-            {
-                var focused = AutomationElement.FocusedElement;
-                if (focused?.TryGetCurrentPattern(TextPattern.Pattern, out var p) != true) return null;
-                var parts = ((TextPattern)p).GetSelection().Select(r => r.GetText(5000));
-                var s = string.Join("\n", parts);
-                return string.IsNullOrWhiteSpace(s) ? null : s;
-            }
-            catch { return null; }
-        });
-        return work.Wait(1000) ? work.Result : null;
-    }
+        var focused = AutomationElement.FocusedElement;
+        if (focused?.TryGetCurrentPattern(TextPattern.Pattern, out var p) != true) return null;
+        var s = string.Join("\n", ((TextPattern)p).GetSelection().Select(r => r.GetText(5000)));
+        return string.IsNullOrWhiteSpace(s) ? null : s;
+    }, (string?)null, 1000);
 
     /// Fallback for apps that don't expose their selection: press Ctrl+C, read it, then put back what was on
     /// the clipboard before (text or a picture; anything else is left as the copy).

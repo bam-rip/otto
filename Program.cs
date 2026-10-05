@@ -478,7 +478,7 @@ sealed class TrayApp : ApplicationContext
             if (quick.DropDownItems.Count == 0) quick.DropDownItems.Add(new ToolStripMenuItem("None yet: add them in Settings") { Enabled = false });
         };
         m.Items.Add(quick);
-        m.Items.Add("Reminders and scheduled tasks…", null, (_, _) => ScheduleWindow.Show());
+        m.Items.Add("Reminders and scheduled tasks…", null, (_, _) => SettingsWindow.Show(SettingsWindow.Reminders));
         m.Items.Add("Welcome tour", null, (_, _) => ShowWelcome());
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
         startup.Click += (_, _) => { SetStartWithWindows(!startup.Checked); startup.Checked = StartsWithWindows(); };
@@ -700,7 +700,11 @@ sealed class TrayApp : ApplicationContext
 
     async void RunScheduled((Schedule.Item item, bool late) job)
     {
-        if (Providers.Problem(Providers.Current()) != null) return;
+        if (Providers.Problem(Providers.Current()) is string notReady)
+        {
+            Notify($"Skipped: {job.item.Text.Clip(50)}", notReady, null); // don't drop it silently
+            return;
+        }
         if (Spending.Blocked() is string limit) { Notify($"Skipped: {job.item.Text.Clip(50)}", limit, null); return; }
         runningScheduled = true;
         var said = new System.Text.StringBuilder();

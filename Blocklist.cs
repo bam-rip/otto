@@ -9,15 +9,21 @@ static class Blocklist
 {
     static string FilePath => Path.Combine(Paths.Data, "blocked.txt");
 
+    static (string path, DateTime written, List<string> entries) cache = ("", DateTime.MinValue, new());
+
     public static List<string> Entries
     {
         get
         {
             try
             {
-                return File.Exists(FilePath)
-                    ? File.ReadAllLines(FilePath).Select(l => l.Trim()).Where(l => l.Length >= 2 && !l.StartsWith('#')).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-                    : new();
+                var path = FilePath;
+                if (!File.Exists(path)) return new();
+                var written = File.GetLastWriteTimeUtc(path);
+                // read on every screen action, so it's kept in memory until the file changes
+                if (cache.path != path || cache.written != written)
+                    cache = (path, written, File.ReadAllLines(path).Select(l => l.Trim()).Where(l => l.Length >= 2 && !l.StartsWith('#')).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+                return cache.entries.ToList();
             }
             catch (IOException) { return new(); }
         }
@@ -62,25 +68,16 @@ static class Blocklist
     }
 
     /// The address in a browser's address bar, or null if it can't be read in time.
-    static string? BrowserAddress(IntPtr h)
+    static string? BrowserAddress(IntPtr h) => UiTree.Quick(() =>
     {
-        var work = Task.Run(() =>
+        var edits = AutomationElement.FromHandle(h).FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
+        foreach (AutomationElement e in edits)
         {
-            try
-            {
-                var root = AutomationElement.FromHandle(h);
-                var edits = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
-                foreach (AutomationElement e in edits)
-                {
-                    var name = e.Current.Name ?? "";
-                    var id = e.Current.AutomationId ?? "";
-                    if (!(name.Contains("address", StringComparison.OrdinalIgnoreCase) || id is "urlbar-input" or "addressEditBox")) continue;
-                    if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var p)) return ((ValuePattern)p).Current.Value;
-                }
-            }
-            catch { }
-            return null;
-        });
-        return work.Wait(1500) ? work.Result : null;
-    }
+            var name = e.Current.Name ?? "";
+            var id = e.Current.AutomationId ?? "";
+            if (!(name.Contains("address", StringComparison.OrdinalIgnoreCase) || id is "urlbar-input" or "addressEditBox")) continue;
+            if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var p)) return ((ValuePattern)p).Current.Value;
+        }
+        return null;
+    }, (string?)null);
 }

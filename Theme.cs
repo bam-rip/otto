@@ -1,5 +1,3 @@
-using Microsoft.Win32;
-
 namespace Otto;
 
 /// Look and feel: dark or light, which side the panel slides in from, and how big the chat text is.
@@ -41,15 +39,6 @@ static class Theme
     public static event Action? Changed;
     public static void Apply() => Changed?.Invoke();
 
-    static string Read(string name, string fallback)
-    {
-        using var k = Registry.CurrentUser.OpenSubKey(Key);
-        return k?.GetValue(name) as string ?? fallback;
-    }
-
-    static void Write(string name, string value)
-    {
-        using var k = Registry.CurrentUser.CreateSubKey(Key);
-        k.SetValue(name, value);
-    }
+    static string Read(string name, string fallback) => Reg.Get(Key, name) ?? fallback;
+    static void Write(string name, string value) => Reg.Set(Key, name, value);
 }

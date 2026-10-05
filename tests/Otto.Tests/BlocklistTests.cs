@@ -38,6 +38,9 @@ public class BlocklistTests : IDisposable
         Assert.StartsWith("Blocked", open);
         var fetch = await Tools.Run("fetch_page", new JsonObject { ["url"] = "https://www.paypal.com/au/home" }, _ => true, CancellationToken.None);
         Assert.StartsWith("Blocked", fetch);
+        // and not through PowerShell either
+        var ps = await Tools.Run("run_powershell", new JsonObject { ["command"] = "Invoke-WebRequest https://www.commbank.com.au/netbank" }, _ => true, CancellationToken.None);
+        Assert.StartsWith("Blocked", ps);
     }
 }
 

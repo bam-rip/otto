@@ -1,5 +1,4 @@
 using System.Globalization;
-using Microsoft.Win32;
 
 namespace Otto;
 
@@ -66,15 +65,6 @@ static class Spending
 
     static void Write(string name, double v) => WriteString(name, v.ToString("R", CultureInfo.InvariantCulture));
 
-    static string? ReadString(string name)
-    {
-        using var k = Registry.CurrentUser.OpenSubKey(Key);
-        return k?.GetValue(name) as string;
-    }
-
-    static void WriteString(string name, string v)
-    {
-        using var k = Registry.CurrentUser.CreateSubKey(Key);
-        k.SetValue(name, v);
-    }
+    static string? ReadString(string name) => Reg.Get(Key, name);
+    static void WriteString(string name, string v) => Reg.Set(Key, name, v);
 }

@@ -12,6 +12,22 @@ static class Paths
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Otto");
 }
 
+/// Reading and writing string values under HKCU, for settings kept in the registry.
+static class Reg
+{
+    public static string? Get(string key, string name)
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(key);
+        return k?.GetValue(name) as string;
+    }
+
+    public static void Set(string key, string name, string value)
+    {
+        using var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key);
+        k.SetValue(name, value);
+    }
+}
+
 static class StringExtensions
 {
     /// At most n characters, with "…" when something was cut.

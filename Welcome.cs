@@ -16,7 +16,7 @@ static class Welcome
             StartPosition = FormStartPosition.CenterScreen, TopMost = true,
             AutoScaleMode = AutoScaleMode.Font, Font = new Font("Segoe UI", 10.5f), ClientSize = new Size(560, 470),
         };
-        Win32Dark(f);
+        f.HandleCreated += (_, _) => Ui.DarkTitleBar(f, dark: true); // the tour is always dark
         var page = new Panel { Location = new Point(36, 28), Size = new Size(488, 360) };
         // page dots drawn as circles: the ● and ○ characters come out at different sizes in Segoe UI
         int at = 0, pageCount = 5;
@@ -137,13 +137,4 @@ static class Welcome
         FlatAppearance = { BorderSize = 0 }, Font = new Font("Segoe UI", 10f),
     };
 
-    /// Dark title bar to match (Windows 10 2004+; ignored elsewhere).
-    static void Win32Dark(Form f) => f.HandleCreated += (_, _) =>
-    {
-        int on = 1;
-        DwmSetWindowAttribute(f.Handle, 20, ref on, sizeof(int));
-    };
-
-    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
-    static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 }

@@ -175,38 +175,19 @@ static class KeyPrompt
 {
     public static (string Label, string Key)? Ask(IWin32Window owner, string providerLabel, int number)
     {
-        using var f = new Form
-        {
-            Text = "Add a key for " + providerLabel,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            StartPosition = FormStartPosition.CenterParent,
-            MinimizeBox = false,
-            MaximizeBox = false,
-            ShowInTaskbar = false,
-            TopMost = true,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Font = new Font("Segoe UI", 9.5f),
-            Padding = new Padding(14),
-        };
-        var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill };
-        f.Controls.Add(grid);
-        grid.Controls.Add(new Label { Text = "Name (so you can tell your keys apart)", AutoSize = true, Margin = new Padding(0, 0, 0, 4) });
-        var name = new TextBox { Width = 380, Text = $"Key {number}" };
-        grid.Controls.Add(name);
-        grid.Controls.Add(new Label { Text = "API key", AutoSize = true, Margin = new Padding(0, 12, 0, 4) });
-        var key = new TextBox { Width = 380, UseSystemPasswordChar = true, PlaceholderText = "Paste your key" };
-        grid.Controls.Add(key);
-        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Size = new Size(380, 40), Margin = new Padding(0, 16, 0, 0) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var ok = new Button { Text = "Add", DialogResult = DialogResult.OK, AutoSize = true, Enabled = false };
+        using var f = Ui.Dialog("Add a key for " + providerLabel, out var body);
+        body.Controls.Add(Ui.Caption("Name (so you can tell your keys apart)"));
+        var name = Ui.TextBox(420, $"Key {number}");
+        body.Controls.Add(name);
+        body.Controls.Add(Ui.Caption("API key"));
+        var key = Ui.TextBox(420, password: true, placeholder: "Paste your key");
+        body.Controls.Add(key);
+        var ok = Ui.DialogButtons(f, body, "Add");
+        ok.Enabled = false;
         key.TextChanged += (_, _) => ok.Enabled = key.Text.Trim().Length > 0;
-        buttons.Controls.AddRange(new Control[] { cancel, ok });
-        grid.Controls.Add(buttons);
-        f.AcceptButton = ok;
-        f.CancelButton = cancel;
         f.Shown += (_, _) => key.Focus();
         if (f.ShowDialog(owner) != DialogResult.OK || key.Text.Trim().Length == 0) return null;
         return (name.Text.Trim(), key.Text.Trim());
     }
 }
+

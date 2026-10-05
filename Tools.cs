@@ -175,6 +175,8 @@ static class Tools
             case "run_powershell":
             {
                 var cmd = S(input, "command");
+                // a blocked site or app named in a command (Invoke-WebRequest commbank.com.au, Start-Process banking) is still off limits
+                if (Blocklist.Match(cmd) is string blockedCmd) return Blocklist.Refusal(blockedCmd);
                 if (RiskyCommand.IsMatch(cmd)) { if (!confirm($"Run this PowerShell command?\n\n{cmd}")) return "User declined."; }
                 else if (!Allowed($"Run this PowerShell command:\n\n{cmd}")) return "User declined.";
                 return await PowerShell(cmd, ct);

@@ -181,3 +181,40 @@ public class AgentHistoryTests
         Assert.False(Desktop.IsReading(new JsonArray { new JsonObject { ["type"] = "text", ["text"] = "hi" } }));
     }
 }
+
+public class TrimOldResultsTests
+{
+    static JsonObject User(string text) => new() { ["role"] = "user", ["content"] = text };
+    static JsonObject Use(string id) => new() { ["role"] = "assistant", ["content"] = new JsonArray { new JsonObject { ["type"] = "tool_use", ["id"] = id, ["name"] = "fetch_page", ["input"] = new JsonObject() } } };
+    static JsonObject Result(string id, string text) => new() { ["role"] = "user", ["content"] = new JsonArray { new JsonObject { ["type"] = "tool_result", ["tool_use_id"] = id, ["content"] = text } } };
+    static string Content(JsonArray m, int i) => m[i]!["content"]![0]!["content"]!.ToString();
+
+    [Fact]
+    public void Big_results_from_older_turns_are_shortened_recent_ones_kept_whole()
+    {
+        var big = new string('x', 5000);
+        var m = new JsonArray
+        {
+            User("read this page"), Use("a"), Result("a", big), new JsonObject { ["role"] = "assistant", ["content"] = "done" },
+            User("and this one"), Use("b"), Result("b", big), new JsonObject { ["role"] = "assistant", ["content"] = "done" },
+            User("thanks, now this"), Use("c"), Result("c", big),
+        };
+        Agent.TrimOldResults(m);
+        Assert.EndsWith(Agent.TrimNote, Content(m, 2));   // two turns back: shortened
+        Assert.Equal(1200 + 1 + Agent.TrimNote.Length, Content(m, 2).Length);
+        Assert.Equal(big, Content(m, 6));                  // last two turns: whole
+        Assert.Equal(big, Content(m, 10));
+
+        var once = Content(m, 2);
+        Agent.TrimOldResults(m);                           // doing it again changes nothing
+        Assert.Equal(once, Content(m, 2));
+    }
+
+    [Fact]
+    public void Small_results_are_left_alone()
+    {
+        var m = new JsonArray { User("1"), Use("a"), Result("a", "short"), User("2"), User("3") };
+        Agent.TrimOldResults(m);
+        Assert.Equal("short", Content(m, 2));
+    }
+}

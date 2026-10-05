@@ -511,6 +511,12 @@ static class SettingsWindow
 
             var used = Ui.Card(p, "This month", null);
             used.Controls.Add(new Label { Text = $"US${Spending.ThisMonthTotal():0.00}", AutoSize = true, Font = new Font("Segoe UI Light", 22f), ForeColor = Ui.Fg });
+            if (!Providers.Current().Provider.IsAnthropic)
+                used.Controls.Add(new Label
+                {
+                    Text = $"Your current AI, {Providers.Current().Provider.Label}, doesn't report prices, so this limit isn't counting it.",
+                    AutoSize = true, MaximumSize = new Size(W - 40, 0), ForeColor = Color.FromArgb(247, 181, 0), Margin = new Padding(0, 4, 0, 6),
+                });
             used.Controls.Add(Ui.Hint("Counted for Claude, whose prices Otto knows. Other providers don't report a price, so set a limit in their own console too " +
                                       "(Anthropic: console.anthropic.com → Limits). Google Gemini's free tier costs nothing.", W - 40));
         }
@@ -744,9 +750,41 @@ static class Ui
         return row;
     }
 
-    public static void DarkTitleBar(Form f)
+    /// A small themed dialog (title bar, padding, colours); add fields to 'body', then DialogButtons.
+    public static Form Dialog(string title, out FlowLayoutPanel body)
     {
-        int on = Theme.Light ? 0 : 1;
+        var f = new Form
+        {
+            Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, TopMost = true, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Font = new Font("Segoe UI", 9.75f), Padding = new Padding(16),
+            BackColor = Back, ForeColor = Fg,
+        };
+        f.HandleCreated += (_, _) => DarkTitleBar(f);
+        body = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Dock = DockStyle.Fill };
+        f.Controls.Add(body);
+        return f;
+    }
+
+    /// OK and Cancel at the bottom of a Dialog; returns the OK button.
+    public static Button DialogButtons(Form f, FlowLayoutPanel body, string okText)
+    {
+        var row = Row();
+        row.Margin = new Padding(0, 14, 0, 0);
+        var ok = Button(okText, primary: true);
+        ok.DialogResult = DialogResult.OK;
+        var cancel = Button("Cancel");
+        cancel.DialogResult = DialogResult.Cancel;
+        row.Controls.AddRange(new Control[] { ok, cancel });
+        body.Controls.Add(row);
+        f.AcceptButton = ok;
+        f.CancelButton = cancel;
+        return ok;
+    }
+
+    public static void DarkTitleBar(Form f, bool? dark = null)
+    {
+        int on = dark ?? !Theme.Light ? 1 : 0;
         DwmSetWindowAttribute(f.Handle, 20, ref on, sizeof(int));
         DarkScrollbars(f);
     }
@@ -826,16 +864,7 @@ static class QuickActionPrompt
 {
     public static QuickActions.Action? Ask(IWin32Window owner, QuickActions.Action? existing)
     {
-        using var f = new Form
-        {
-            Text = existing == null ? "Add a quick action" : "Edit quick action", FormBorderStyle = FormBorderStyle.FixedDialog,
-            StartPosition = FormStartPosition.CenterParent, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false, TopMost = true,
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Font = new Font("Segoe UI", 9.75f), Padding = new Padding(16),
-            BackColor = Ui.Back, ForeColor = Ui.Fg,
-        };
-        f.HandleCreated += (_, _) => Ui.DarkTitleBar(f);
-        var grid = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Dock = DockStyle.Fill };
-        f.Controls.Add(grid);
+        using var f = Ui.Dialog(existing == null ? "Add a quick action" : "Edit quick action", out var grid);
         grid.Controls.Add(Ui.Caption("Name (what the button says)"));
         var name = Ui.TextBox(420, existing?.Name ?? "", "Morning briefing");
         grid.Controls.Add(name);
@@ -843,15 +872,7 @@ static class QuickActionPrompt
         var prompt = Ui.TextBox(420, existing?.Prompt ?? "", "Summarise my unread email and what's on my calendar today", multiline: true);
         prompt.Height = 90;
         grid.Controls.Add(prompt);
-        var row = Ui.Row();
-        var ok = Ui.Button(existing == null ? "Add" : "Save", primary: true);
-        ok.DialogResult = DialogResult.OK;
-        var cancel = Ui.Button("Cancel");
-        cancel.DialogResult = DialogResult.Cancel;
-        row.Controls.AddRange(new Control[] { ok, cancel });
-        grid.Controls.Add(row);
-        f.AcceptButton = ok;
-        f.CancelButton = cancel;
+        Ui.DialogButtons(f, grid, existing == null ? "Add" : "Save");
         if (f.ShowDialog(owner) != DialogResult.OK || name.Text.Trim().Length == 0 || prompt.Text.Trim().Length == 0) return null;
         return new(name.Text.Trim(), prompt.Text.Trim());
     }

@@ -100,40 +100,28 @@ static class UiTree
 
     /// The label of the control under a screen point (and the one it sits in, for text inside a button),
     /// or null if UI Automation can't tell in time.
-    public static string? LabelAt(Point p)
+    public static string? LabelAt(Point p) => Quick(() =>
     {
-        var work = Task.Run(() =>
-        {
-            try
-            {
-                var e = AutomationElement.FromPoint(new System.Windows.Point(p.X, p.Y));
-                var name = e.Current.Name;
-                var parent = TreeWalker.ControlViewWalker.GetParent(e);
-                if (parent != null && parent.Current.ControlType is var t && (t == ControlType.Button || t == ControlType.Hyperlink))
-                    name = parent.Current.Name + " " + name;
-                return name;
-            }
-            catch { return null; }
-        });
-        return work.Wait(1500) ? work.Result : null;
-    }
+        var e = AutomationElement.FromPoint(new System.Windows.Point(p.X, p.Y));
+        var name = e.Current.Name;
+        var parent = TreeWalker.ControlViewWalker.GetParent(e);
+        if (parent != null && parent.Current.ControlType is var t && (t == ControlType.Button || t == ControlType.Hyperlink))
+            name = parent.Current.Name + " " + name;
+        return name;
+    }, null);
 
     /// The label of the control with keyboard focus, or null.
-    public static string? FocusedLabel()
-    {
-        var work = Task.Run(() => { try { return AutomationElement.FocusedElement?.Current.Name; } catch { return null; } });
-        return work.Wait(1500) ? work.Result : null;
-    }
+    public static string? FocusedLabel() => Quick(() => AutomationElement.FocusedElement?.Current.Name, null);
 
     /// Is the keyboard focus in a password box? Otto never types into those.
-    public static bool FocusIsPassword()
+    public static bool FocusIsPassword() => Quick(() => AutomationElement.FocusedElement?.Current.IsPassword == true, false);
+
+    /// A UI Automation question with a time limit: some apps answer slowly or hang, and nothing should wait on
+    /// them. Errors and timeouts give the fallback.
+    internal static T Quick<T>(Func<T> ask, T fallback, int ms = 1500)
     {
-        var work = Task.Run(() =>
-        {
-            try { return AutomationElement.FocusedElement?.Current.IsPassword == true; }
-            catch { return false; }
-        });
-        return work.Wait(1500) && work.Result;
+        var work = Task.Run(() => { try { return ask(); } catch { return fallback; } });
+        return work.Wait(ms) ? work.Result : fallback;
     }
 
     /// Finds a control in the front window by its label, for clicks that must still work next time

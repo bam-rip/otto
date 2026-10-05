@@ -326,7 +326,7 @@ static partial class Desktop
     };
 
     /// A console or the Win+R box: typing there runs commands, so it gets the same checks as run_powershell.
-    static bool IsCommandWindow(IntPtr h) =>
+    internal static bool IsCommandWindow(IntPtr h) =>
         Terminals.Contains(Win32.ProcessName(h)) || Win32.ProcessName(h) == "explorer" && Win32.Title(h) == "Run";
 
     /// The model flags consequential steps itself. The only hard backstop is permanent delete,
