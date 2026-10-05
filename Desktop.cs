@@ -93,6 +93,7 @@ static partial class Desktop
         }
         const string Declined = "User declined that click. Don't retry it; ask them what they'd like instead.";
 
+        Blocklist.CheckFront(); // a blocked app or site in front: don't even look at it
         bool acted = false;
         for (int i = 0; i < steps.Count; i++)
         {
@@ -239,6 +240,7 @@ static partial class Desktop
     static JsonNode Observe(string observe, CancellationToken ct)
     {
         if (observe == "none") return JsonValue.Create("Done.")!;
+        Blocklist.CheckFront(); // it may have navigated somewhere blocked: don't send that screen to the AI
         if (UiTree.ShowsOutsideContent(Win32.Foreground())) Safety.Saw("screen");
         if (observe == "ui")
         {

@@ -136,6 +136,7 @@ static class Tools
             case "fetch_page":
             {
                 var url = S(input, "url");
+                if (Blocklist.Match(url) is string blockedUrl) return Blocklist.Refusal(blockedUrl);
                 if (Safety.LooksLikeSmuggling(url) && !Allowed($"Open this web address (it carries a lot of data in it):\n\n{url.Clip(300)}"))
                     return "User declined.";
                 return await Fetch(url, input["find"]?.GetValue<string>(), ct);
@@ -143,6 +144,7 @@ static class Tools
             case "open":
             {
                 var target = S(input, "target");
+                if (Blocklist.Match(target) is string blockedOpen) return Blocklist.Refusal(blockedOpen);
                 Safety.RefuseNetworkPath(target);
                 if (Safety.RiskyScheme(target) is string scheme
                     && !confirm($"Open this {scheme}: link? Links of this kind can install or run things on your PC.\n\n{target}"))
