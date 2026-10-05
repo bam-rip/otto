@@ -140,6 +140,34 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-mail.txt"), outp);
             return;
         }
+        // Otto.exe --click-test → drives tests\click-test-window.ps1 (start it first): checks the Buy-button backstop,
+        // the password-box refusal, and how long each guarded click takes. Log in %TEMP%\otto-click-test.txt
+        if (Dev && Environment.GetCommandLineArgs().Contains("--click-test"))
+        {
+            var log = new System.Text.StringBuilder();
+            for (int i = 0; i < 50 && Win32.Title(Win32.Foreground()) != "Otto click test"; i++) Thread.Sleep(200);
+            log.AppendLine("front window: " + Win32.Title(Win32.Foreground()));
+            void Step(string what, System.Text.Json.Nodes.JsonObject step)
+            {
+                var asked = new List<string>();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                string result;
+                try
+                {
+                    result = Desktop.Run(new System.Text.Json.Nodes.JsonObject { ["observe"] = "none", ["steps"] = new System.Text.Json.Nodes.JsonArray { step } },
+                        q => { asked.Add(q.Replace('\n', ' ')); return false; }, CancellationToken.None).GetAwaiter().GetResult().ToString();
+                }
+                catch (Exception e) { result = "ERROR " + e.Message + " @ " + string.Join(" | ", (e.StackTrace ?? "").Split('\n').Take(8).Select(l => l.Trim())); }
+                log.AppendLine($"{what}: {sw.ElapsedMilliseconds} ms, asked: {(asked.Count == 0 ? "no" : string.Join(" / ", asked))}, result: {result.Clip(400)}");
+                Thread.Sleep(300);
+            }
+            Step("click 'Add to cart'", new() { ["action"] = "click", ["name"] = "Add to cart" });
+            Step("click 'Place your order'", new() { ["action"] = "click", ["name"] = "Place your order" });
+            Step("click password box", new() { ["action"] = "click", ["name"] = "Password" });
+            Step("type into password box", new() { ["action"] = "type", ["text"] = "hunter2" });
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-click-test.txt"), log.ToString());
+            return;
+        }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
         if (Dev && Environment.GetCommandLineArgs().Contains("--update-test"))
         {

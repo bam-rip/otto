@@ -191,9 +191,9 @@ static class UiTree
                 var rect = new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
                 if (!rect.IntersectsWith(screen)) continue;
 
-                string name = Clean(e.GetCachedPropertyValue(AutomationElement.NameProperty) as string);
-                string value = Clean(e.GetCachedPropertyValue(ValuePattern.ValueProperty, true) as string);
-                if (e.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState ts)
+                string name = Clean(Cached(e, AutomationElement.NameProperty) as string);
+                string value = Clean(Cached(e, ValuePattern.ValueProperty) as string);
+                if (Cached(e, TogglePattern.ToggleStateProperty) is ToggleState ts)
                     value = ts == ToggleState.On ? "on" : "off";
 
                 // unlabeled decoration and empty containers are noise
@@ -206,6 +206,14 @@ static class UiTree
             catch (Exception ex) when (ex is ElementNotAvailableException || ex is COMException { HResult: UIA_E_ELEMENTNOTAVAILABLE }) { }
         }
         return list;
+    }
+
+    /// One property of one control. Apps can answer a property with an error (WinForms buttons do for Value);
+    /// that used to throw out the whole window's reading, so now it just means "no value".
+    static object? Cached(AutomationElement e, AutomationProperty p)
+    {
+        try { return e.GetCachedPropertyValue(p, true); }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or COMException { HResult: not UIA_E_ELEMENTNOTAVAILABLE }) { return null; }
     }
 
     static string Clean(string? s) => string.IsNullOrWhiteSpace(s) ? "" : string.Join(' ', s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
