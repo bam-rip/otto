@@ -12,6 +12,8 @@ connection it makes and what it sends.
   model (Ollama, LM Studio) keeps all of it on your PC.
 - **Web search and web pages**: searches go to DuckDuckGo or Bing; pages Otto reads are fetched from their sites.
 - **Your email provider** (Gmail and other IMAP services, or Microsoft for Outlook), once you connect it in settings.
+- **Your calendar link**, when Otto reads your calendar.
+- **Scheduled tasks** you set up run on their own at the time you chose, and send the same kinds of requests as above.
 
 ## On its own
 
@@ -21,7 +23,8 @@ connection it makes and what it sends.
 
 ## What stays on your PC
 
-- Chats (encrypted with your Windows account), notes, routines, backups and sounds: `%LOCALAPPDATA%\Otto`
+- Chats (encrypted with your Windows account), notes, routines, reminders and scheduled tasks, backups and sounds: `%LOCALAPPDATA%\Otto`
+- Your calendar link: Windows Credential Manager (anyone with it can read your calendar)
 - Settings: the registry under `HKCU\Software\Otto`
 - API keys, app passwords and email sign-ins: Windows Credential Manager
 

@@ -16,6 +16,8 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Work with your apps and files.** It can open any installed app by name, manage windows, read and write files (including `.docx`), and run PowerShell.
 - **Use the web.** It searches, reads pages, and works inside your normal browser.
 - **Email** (experimental): list, search, read, draft and send email, always asking before anything is sent. Works with Gmail, Yahoo, iCloud, Fastmail and most other providers through an app password, or with Outlook, Hotmail and Microsoft 365 (which adds the calendar).
+- **Reminders and scheduled tasks.** "Remind me at 5 to call Mum", or "every weekday at 8, summarise my unread email". Reminders pop up as notifications; tasks run on their own in the background (without touching your screen) and notify you when done. Anything that came due while the PC was off runs when Otto starts. See or cancel them from the tray menu.
+- **Calendar.** Paste your calendar's private iCal link (Google, Apple or Outlook.com) in settings and Otto can answer "what's on tomorrow?". Read-only.
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
 - **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
 - **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.

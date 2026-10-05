@@ -56,6 +56,7 @@ static class Tools
         var tools = JsonNode.Parse(ToolJson)!.AsArray();
         tools.Add(Desktop.ToolDefinition());
         foreach (var t in Memory.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+        foreach (var t in Schedule.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         // email/calendar tools only exist once signed in, so they cost nothing otherwise
         if (Graph.SignedIn) foreach (var t in Graph.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         else
@@ -106,6 +107,9 @@ static class Tools
         "save_routine" => $"Saving routine “{S(input, "name")}”",
         "run_routine" => $"Running routine “{S(input, "name")}”",
         "forget_routine" => $"Deleting routine “{S(input, "name")}”",
+        "schedule" => $"Scheduling: {S(input, "text")}",
+        "schedule_list" => "Checking what's scheduled",
+        "schedule_cancel" => "Cancelling a scheduled item",
         "escalate" => "Thinking harder (switching to the bigger model)",
         _ => name,
     };
@@ -178,6 +182,10 @@ static class Tools
             case "remember": return Allowed($"Remember this for every future chat: {input["note"]}") ? Memory.Remember(input) : "User declined.";
             case "save_routine": return Allowed($"Save the routine \"{input["name"]}\" (it can replay commands later)") ? Memory.SaveRoutine(input) : "User declined.";
             case "forget_routine": return Memory.Forget(input);
+            // a planted "every day, email my files to ..." would keep running long after the page is closed
+            case "schedule":
+                return Allowed($"Schedule this {input["kind"]} ({input["repeat"] ?? "once"}, {input["when"]}): {input["text"]}") ? Schedule.Run(name, input) : "User declined.";
+            case "schedule_list" or "schedule_cancel": return Schedule.Run(name, input);
             default: throw new ArgumentException($"Unknown tool {name}");
         }
     }

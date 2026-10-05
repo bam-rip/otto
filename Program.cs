@@ -168,6 +168,23 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-click-test.txt"), log.ToString());
             return;
         }
+        // Otto.exe --task-test "request" → runs it the way a scheduled task runs (unattended, no screen), log in %TEMP%\otto-task-test.txt
+        int tt = Dev ? Array.IndexOf(Environment.GetCommandLineArgs(), "--task-test") : -1;
+        if (tt >= 0)
+        {
+            var log = new System.Text.StringBuilder();
+            var a = new Agent
+            {
+                Unattended = true,
+                Confirm = q => { log.AppendLine("WOULD ASK (declined): " + q.Replace('\n', ' ')); return false; },
+                OnText = t => log.AppendLine("Otto: " + t), Animate = () => false,
+                OnTool = t => log.AppendLine("TOOL: " + t), OnUsage = (_, _, _) => { }, OnControl = on => { if (on) log.AppendLine("!! TOOK SCREEN CONTROL"); },
+            };
+            try { a.RunAsync("(Scheduled task. Nobody is watching: you can't use the screen, and anything that needs the user's OK will be declined, so finish what you can and say what's left.)\n\n" + Environment.GetCommandLineArgs()[tt + 1], CancellationToken.None).GetAwaiter().GetResult(); }
+            catch (Exception e) { log.AppendLine("ERROR " + Agent.ErrorText(e)); }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-task-test.txt"), log.ToString());
+            return;
+        }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
         if (Dev && Environment.GetCommandLineArgs().Contains("--update-test"))
         {
@@ -254,6 +271,13 @@ sealed class TrayApp : ApplicationContext
     long chatTokens, chatCached;
     Updater.Release? pendingUpdate;
     readonly System.Windows.Forms.Timer updateTimer = new();
+
+    // ---- reminders and scheduled tasks ----
+    readonly System.Windows.Forms.Timer scheduleTimer = new() { Interval = 20_000 };
+    readonly Queue<(Schedule.Item item, bool late)> taskQueue = new();
+    bool runningScheduled;
+    string? pendingUserText; // asked while a scheduled task was running; starts right after it
+    string? notifiedChat;    // the chat a "task done" notification opens
     ToolStripMenuItem? updateItem;
     string chatId = ChatStore.NewId();
     bool costKnown = true, replySounded, toldFallback;
@@ -371,7 +395,15 @@ sealed class TrayApp : ApplicationContext
             Visible = true,
             ContextMenuStrip = BuildMenu(),
         };
-        tray.BalloonTipClicked += (_, _) => panel.ShowPanel();
+        tray.BalloonTipClicked += (_, _) =>
+        {
+            if (notifiedChat is string id && cts == null && !runningScheduled) OpenChat(id);
+            notifiedChat = null;
+            panel.ShowPanel();
+        };
+        scheduleTimer.Tick += (_, _) => RunDue();
+        scheduleTimer.Start();
+        panel.BeginInvoke(RunDue); // anything that came due while Otto was off
         tray.MouseClick +=(_, e) => { if (e.Button == MouseButtons.Left) panel.Toggle(); };
 
         var failed = new List<string>();
@@ -405,6 +437,7 @@ sealed class TrayApp : ApplicationContext
         var m = new ContextMenuStrip();
         m.Items.Add("Open", null, (_, _) => panel.ShowPanel());
         m.Items.Add("Settings (AI provider, key)…", null, (_, _) => SettingsWindow.Show());
+        m.Items.Add("Reminders and scheduled tasks…", null, (_, _) => ScheduleWindow.Show());
         m.Items.Add("Welcome tour", null, (_, _) => ShowWelcome());
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };
         startup.Click += (_, _) => { SetStartWithWindows(!startup.Checked); startup.Checked = StartsWithWindows(); };
@@ -433,6 +466,13 @@ sealed class TrayApp : ApplicationContext
     async void Run(string text)
     {
         if (cts != null) { panel.AddSystem("Still working on the last request. Stop it first (Ctrl+Alt+End) or wait."); return; }
+        // one thing at a time: the safety state (what's been read this turn) is shared
+        if (runningScheduled)
+        {
+            pendingUserText = text;
+            panel.AddSystem("Finishing a scheduled task first. I'll start on this the moment it's done.");
+            return;
+        }
         // Otto's own program file is being replaced: anything started now would run half old, half new
         if (installing) { panel.AddSystem("Updating Otto. Ask again in a few seconds, once it has restarted."); return; }
         lastReply = null;
@@ -595,6 +635,65 @@ sealed class TrayApp : ApplicationContext
         Speaker.Stop();
         panel.CancelConfirms();
         if (voice.Listening) { voice.Abort(); panel.SetListening(false); }
+    }
+
+    void RunDue()
+    {
+        foreach (var item in Schedule.TakeDue())
+        {
+            var dueAgo = DateTime.Now - item.Next;
+            bool late = dueAgo > TimeSpan.FromMinutes(2);
+            if (item.Kind == "reminder")
+            {
+                var text = item.Text + (late ? $" (was due {item.Next:ddd h:mm tt}, while Otto was off)" : "");
+                Notify("Reminder", text, null);
+                panel.AddSystem("Reminder: " + text);
+            }
+            else if (dueAgo > TimeSpan.FromHours(24))
+                Notify("Skipped a scheduled task", $"{item.Text.Clip(80)} was due {item.Next:ddd d MMM h:mm tt} while Otto was off.", null);
+            else taskQueue.Enqueue((item, late));
+        }
+        if (!runningScheduled && cts == null && taskQueue.Count > 0) RunScheduled(taskQueue.Dequeue());
+    }
+
+    async void RunScheduled((Schedule.Item item, bool late) job)
+    {
+        if (Providers.Problem(Providers.Current()) != null) return;
+        runningScheduled = true;
+        var said = new System.Text.StringBuilder();
+        var needed = new List<string>();
+        var a = new Agent
+        {
+            Unattended = true,
+            Confirm = q => { needed.Add(q); return false; }, // nobody is there to say yes
+            OnText = t => said.AppendLine(t),
+            Animate = () => false,
+            OnTool = _ => { },
+            OnUsage = (usd, tokens, cached) => { },
+            OnControl = _ => { },
+        };
+        var id = ChatStore.NewId();
+        try
+        {
+            await a.RunAsync($"(Scheduled task{(job.late ? ", running late because the PC was off" : "")}. Nobody is watching: you can't use the screen, " +
+                             $"and anything that needs the user's OK will be declined, so finish what you can and say what's left.)\n\n{job.item.Text}",
+                             CancellationToken.None);
+        }
+        catch (Exception e) { said.AppendLine("It didn't finish: " + Agent.ErrorText(e)); }
+        ChatStore.Save(id, a.Snapshot());
+        var reply = said.ToString().Trim();
+        Notify($"Done: {job.item.Text.Clip(50)}", (needed.Count > 0 ? "Part of it needs your OK. " : "") + (reply.Length > 0 ? reply : "Finished.").Clip(220), id);
+        runningScheduled = false;
+
+        if (pendingUserText is string waiting) { pendingUserText = null; Run(waiting); }
+        else if (taskQueue.Count > 0) RunScheduled(taskQueue.Dequeue());
+    }
+
+    void Notify(string title, string text, string? chatId)
+    {
+        notifiedChat = chatId;
+        Sfx.Attention();
+        tray.ShowBalloonTip(15_000, title, text.Clip(250), ToolTipIcon.None);
     }
 
     void ShowWelcome() => Welcome.Show(SettingsWindow.Show, StartsWithWindows, SetStartWithWindows);

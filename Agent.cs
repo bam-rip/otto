@@ -37,6 +37,11 @@ sealed class Agent
     public required Action<double?, long, long> OnUsage { get; init; }
     public required Action<bool> OnControl { get; init; } // true while Otto drives the mouse/keyboard
 
+    /// Scheduled tasks run with no one watching: no screen control (it would grab the mouse from whoever is
+    /// using the PC), and no saving notes, routines or more schedules on its own.
+    public bool Unattended { get; init; }
+    static readonly string[] AttendedOnly = { "computer", "run_routine", "save_routine", "remember", "schedule" };
+
     /// A message you typed (as opposed to tool results, which are also "user" messages to the API).
     public static bool IsTurnStart(JsonNode m) =>
         m["role"]?.GetValue<string>() == "user" &&
@@ -167,7 +172,9 @@ sealed class Agent
                         bool isError = false;
                         try
                         {
-                            if (name == "escalate")
+                            if (Unattended && AttendedOnly.Contains(name))
+                                output = "That isn't available in a scheduled task. Finish what you can and say what's left for the user.";
+                            else if (name == "escalate")
                             {
                                 output = smartBlocked ? "The stronger model is over its usage limit right now. Carry on with this one."
                                     : smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
@@ -345,6 +352,8 @@ sealed class Agent
     Task<JsonNode> CallOnceAsync(CancellationToken ct)
     {
         var tools = Tools.Definitions().AsArray();
+        if (Unattended)
+            foreach (var t in tools.Where(t => AttendedOnly.Contains(t?["name"]?.GetValue<string>())).ToList()) tools.Remove(t);
         // always listed (even on the bigger model) so earlier escalate calls in the history still match a tool
         tools.Add(JsonNode.Parse("""
             {"name":"escalate","description":"Switch to a stronger model for the rest of this task: careful planning, real reasoning, polished writing, or when stuck.",
@@ -465,6 +474,8 @@ sealed class Agent
         theirs to see, so reading them for the user is fine. Never say you can't open or use a site or app before trying.
         Search engines miss new or niche pages: if you know or can guess the address (github.com/user/repo, a company's site),
         fetch it directly before saying something doesn't exist.
+        Reminders and repeating jobs: use 'schedule' (a reminder is a notification; a task is a request you'll carry out later on
+        your own, without the screen). Times are local; work them out from today's date.
         Finish the whole request, not just the first step: "open X and summarise Y" means open X, read Y, then give the summary.
         Stop early only when truly blocked (signed out, a captcha, a confirm declined) and then say what's left.
         Earlier messages are real context: resolve "it", "that", "again" from them. Old screen readings are trimmed, so look again if unsure.
