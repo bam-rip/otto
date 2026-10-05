@@ -358,6 +358,53 @@ static class SettingsWindow
             finally { if (!imapConnect.IsDisposed) imapConnect.Enabled = true; }
         };
 
+        // ---- calendar, from an iCal link ----
+        Add(Caption("Calendar link (read-only, for Google, Apple or Outlook.com calendars)"));
+        var calRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        var calLink = new TextBox { Width = W - 130, UseSystemPasswordChar = true, PlaceholderText = Calendar.Connected ? "Saved" : "Paste the secret iCal address" };
+        var calSave = new Button { AutoSize = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(10, 0, 0, 0) };
+        calRow.Controls.AddRange(new Control[] { calLink, calSave });
+        Add(calRow);
+        var calStatus = Hint("");
+        Add(calStatus);
+        var calHelp = new LinkLabel { Text = "Where do I find it?", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+        Add(calHelp);
+        void CalState()
+        {
+            calSave.Text = Calendar.Connected ? "Remove" : "Save";
+            calLink.Enabled = !Calendar.Connected;
+            calLink.PlaceholderText = Calendar.Connected ? "Saved" : "Paste the secret iCal address";
+            calStatus.Text = Calendar.Connected ? "Connected. Otto can read your calendar (it can't add or change events)." : "Not connected.";
+        }
+        CalState();
+        calHelp.LinkClicked += (_, _) => MessageBox.Show(f,
+            "Google Calendar: open calendar.google.com on a computer, click the gear → Settings, pick your calendar on the left, " +
+            "scroll to \"Integrate calendar\" and copy \"Secret address in iCal format\".\n\n" +
+            "Apple (iCloud): share the calendar as a public calendar and copy its link.\n" +
+            "Outlook.com: Settings → Calendar → Shared calendars → Publish a calendar → copy the ICS link.\n\n" +
+            "Keep the link private: anyone with it can see your calendar. You can reset it in the same place.",
+            "Calendar link", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        calSave.Click += async (_, _) =>
+        {
+            if (Calendar.Connected) { Calendar.SetLink(null); calLink.Text = ""; CalState(); return; }
+            calSave.Enabled = false;
+            calStatus.Text = "Checking…";
+            try
+            {
+                Calendar.SetLink(calLink.Text);
+                var test = await Calendar.List(new System.Text.Json.Nodes.JsonObject { ["days"] = 1 }, CancellationToken.None);
+                if (f.IsDisposed) return;
+                calLink.Text = "";
+                CalState();
+            }
+            catch (Exception ex)
+            {
+                Calendar.SetLink(null);
+                if (!f.IsDisposed) calStatus.Text = "Couldn't use that link: " + Agent.ErrorText(ex).Clip(120);
+            }
+            finally { if (!calSave.IsDisposed) calSave.Enabled = true; }
+        };
+
         // ---- chat panel ----
         Add(Heading("Chat panel"));
         grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);

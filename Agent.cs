@@ -478,7 +478,8 @@ sealed class Agent
         Computer tool: by default you get a numbered text list of the front window's controls (works in browsers too); click by number.
         {(cfg.Vision ? "Ask for a screenshot only for visual things; zoom to read small text." : "You can't see images, so work from the text lists only.")} Your panel hides while you work.
         {(Graph.SignedIn ? $"Email/calendar: connected to {Graph.Account}'s Outlook. email_send asks the user; use email_draft if they may want to check first."
-          : Imap.Connected ? $"Email: connected to {Imap.Address}. email_send asks the user; use email_draft if they may want to check first. No calendar." : "")}
+          : Imap.Connected ? $"Email: connected to {Imap.Address}. email_send asks the user; use email_draft if they may want to check first." : "")}
+        {(!Graph.SignedIn && Calendar.Connected ? "Calendar: read-only (calendar_list); to add an event, open the calendar in the browser." : "")}
         'remember' non-obvious facts about the user's apps and preferences. save_routine repeatable multi-step jobs (click by 'name');
         run_routine a saved one when it fits.
         {Memory.PromptSection()}

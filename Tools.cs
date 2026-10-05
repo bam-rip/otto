@@ -58,7 +58,11 @@ static class Tools
         foreach (var t in Memory.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         // email/calendar tools only exist once signed in, so they cost nothing otherwise
         if (Graph.SignedIn) foreach (var t in Graph.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
-        else if (Imap.Connected) foreach (var t in Imap.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+        else
+        {
+            if (Imap.Connected) foreach (var t in Imap.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+            if (Calendar.Connected) foreach (var t in Calendar.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+        }
         return tools;
     }
 
@@ -118,6 +122,8 @@ static class Tools
         // Outlook wins when both are set up (it has the calendar too)
         if (Graph.Handles(name) && Graph.SignedIn) return await Graph.Run(name, input, confirm, ct);
         if (Imap.Handles(name) && Imap.Connected) return await Imap.Run(name, input, confirm, ct);
+        if (name == "calendar_list" && Calendar.Connected) return await Calendar.List(input, ct);
+        if (name.StartsWith("calendar_")) return "No calendar is connected. The user can add their calendar's link in Otto's settings (gear icon).";
         if (Graph.Handles(name)) return "Email isn't connected. The user can set it up in Otto's settings (gear icon).";
         bool Allowed(string action) => Safety.AskIfUntrusted(action) is not string q || confirm(q);
         switch (name)
