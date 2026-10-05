@@ -38,6 +38,7 @@ static class Uninstall
         {
             Graph.SignOut();
             Imap.Disconnect();
+            Calendar.SetLink(null);
             foreach (var p in Providers.All)
                 foreach (var e in KeyRing.List(p)) KeyRing.Remove(p, e.Slot);
             try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Otto", false); } catch { }
