@@ -212,22 +212,29 @@ static class Ui
             SendMessage(f.Handle, 0x0086 /* WM_NCACTIVATE */, (IntPtr)(active ? 0 : 1), IntPtr.Zero);
             SendMessage(f.Handle, 0x0086, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
         }
-        DarkScrollbars(f);
+        ThemedScrollbars(f);
     }
 
-    /// Windows' own dark scrollbars for this window and everything in it, now and as controls are added.
-    public static void DarkScrollbars(Control root)
+    /// Scrollbars (and other Windows-drawn parts) in the current theme's style, for this window and everything in
+    /// it, and for controls added later. Safe to call again after a theme change: it restyles what's there, and
+    /// hooks each control only once.
+    public static void ThemedScrollbars(Control root)
     {
-        if (Theme.Light) return;
+        void Style(Control c) => SetWindowTheme(c.Handle, Theme.Light ? "Explorer" : "DarkMode_Explorer", null);
         void Apply(Control c)
         {
-            if (c.IsHandleCreated) SetWindowTheme(c.Handle, "DarkMode_Explorer", null);
-            else c.HandleCreated += (_, _) => SetWindowTheme(c.Handle, "DarkMode_Explorer", null);
+            if (Hooked.TryAdd(c, null))
+            {
+                c.HandleCreated += (_, _) => Style(c);
+                c.ControlAdded += (_, e) => { if (e.Control != null) Apply(e.Control); };
+            }
+            if (c.IsHandleCreated) Style(c);
             foreach (Control child in c.Controls) Apply(child);
-            c.ControlAdded += (_, e) => { if (e.Control != null) Apply(e.Control); };
         }
         Apply(root);
     }
+
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, object?> Hooked = new();
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr hwnd, string? app, string? idList);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -330,7 +337,6 @@ sealed class FieldBox : Panel
         Box.TextChanged += (_, e) => OnTextChanged(e);
         Box.GotFocus += (_, _) => Invalidate();
         Box.LostFocus += (_, _) => Invalidate();
-        if (multiline && !Theme.Light) Box.HandleCreated += (_, _) => Ui.DarkScrollbars(Box);
     }
 
     [System.Diagnostics.CodeAnalysis.AllowNull]

@@ -52,9 +52,9 @@ static partial class SettingsWindow
         Shot("models");
         try
         {
-            Theme.Light = true; f.Recolor(); f.OpenSection(Look); Shot("light");
+            Theme.Light = true; f.Recolor(); f.OpenSection(Safety); Shot("light");
             log.AppendLine($"light: sidebar glass {f.HasGlass}");
-            Theme.Light = false; f.Recolor(); f.OpenSection(Look); Shot("dark");
+            Theme.Light = false; f.Recolor(); f.OpenSection(Safety); Shot("dark");
             log.AppendLine($"dark: sidebar glass {f.HasGlass}");
         }
         finally { Theme.Light = wasLight; }
@@ -135,7 +135,7 @@ static partial class SettingsWindow
             ForeColor = Ui.Fg;
             navHost.BackColor = Ui.Side;
             if (IsHandleCreated) Ui.DarkTitleBar(this);
-            bool wantGlass = !Theme.Light && Visible;
+            bool wantGlass = Visible; // both themes: the sidebar is all self-drawn, so light text-on-glass works too
             if (wantGlass && glass == null)
             {
                 glass = new GlassSidebar(this, navHost);
@@ -154,6 +154,7 @@ static partial class SettingsWindow
             nav.SeeThrough = glass != null;
             nav.BackColor = glass != null ? Color.Black : Ui.Side;
             nav.Parent = glass != null ? glass : navHost;
+            glass?.Retint();
             glass?.Follow();
             nav.Invalidate(true);
         }

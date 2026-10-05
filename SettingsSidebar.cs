@@ -80,7 +80,10 @@ static partial class SettingsWindow
         readonly Control spot;
         public bool IsGlass { get; }
         /// Lighter than the panel's (92%): over a big flat sidebar the panel's tint hides the blur almost completely.
-        const uint Tint = 0xC0_1A1A1A; // 75% dark tint
+        static uint Tint => Theme.Light ? 0xC0_F0F0F0 : 0xC0_1A1A1A; // 75% tint, light or dark (AABBGGRR)
+
+        /// After a theme change: the same glass, in the new theme's tint.
+        public void Retint() => Acrylic.Set(Handle, true, Tint);
 
         public GlassSidebar(Form owner, Control spot)
         {
