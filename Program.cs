@@ -22,6 +22,8 @@ static class Program
     [STAThread]
     static void Main()
     {
+        // developers: OTTO_DATA points Otto at a separate data folder (sample chats, reminders...) instead of the real one
+        if (Dev && Environment.GetEnvironmentVariable("OTTO_DATA") is { Length: > 0 } data) Paths.Data = data;
         Migration.FromJarvis(); // used to be called Jarvis; carry its data over once
         // debug: Otto.exe --dump-ui → writes what the agent would "see" of the front window, no API calls
         if (Dev && Environment.GetCommandLineArgs().Contains("--dump-ui"))
@@ -230,6 +232,13 @@ static class Program
         {
             try { Updater.Signing.Sign(Environment.GetCommandLineArgs()[sr + 1]); Environment.ExitCode = 0; }
             catch (Exception e) { File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-sign-error.txt"), e.Message); Environment.ExitCode = 1; }
+            return;
+        }
+        // Otto.exe --settings-selftest → see SettingsWindow.SelfTest
+        if (Dev && Environment.GetCommandLineArgs().Contains("--settings-selftest"))
+        {
+            ApplicationConfiguration.Initialize();
+            SettingsWindow.SelfTest();
             return;
         }
         // Otto.exe --welcome → just the first-run walkthrough (doesn't change start-with-Windows)

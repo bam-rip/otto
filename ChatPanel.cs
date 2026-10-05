@@ -13,7 +13,7 @@ sealed class ChatPanel : Form
     internal static readonly Color Accent = Color.FromArgb(0, 120, 215);
     internal static readonly Color Danger = Color.FromArgb(232, 72, 85);
     // Real acrylic (live blur by Windows, like the Start menu). Alpha = how solid: 0xEB is ~92% dark tint, 8% blur.
-    const uint AcrylicTint = 0xEB_1A1A1A; // AABBGGRR
+    internal const uint AcrylicTint = 0xEB_1A1A1A; // AABBGGRR
     static Color FieldColor => Theme.Field;
     static readonly Color Ok = Color.FromArgb(108, 203, 95);
     static readonly Color Amber = Color.FromArgb(247, 181, 0);
@@ -198,34 +198,14 @@ sealed class ChatPanel : Form
         Invalidate(true);
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    struct AccentPolicy { public int AccentState, AccentFlags; public uint GradientColor; public int AnimationId; }
-    [StructLayout(LayoutKind.Sequential)]
-    struct CompositionData { public int Attribute; public IntPtr Data; public int SizeOfData; }
-    [DllImport("user32.dll")] static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref CompositionData data);
-
-    /// Ask the compositor for a live blur behind the window (Win10 1803+). It updates as things move
-    /// behind the panel and costs Otto no CPU. Falls back to plain dark if Windows refuses.
+    /// The live blur behind the panel (dark theme only; see Acrylic).
     void EnableAcrylic()
     {
-        // light theme: a plain light background. The blur relies on black meaning "see-through", which would
-        // make dark text in the message box vanish.
-        bool want = !Theme.Light;
-        var accent = new AccentPolicy { AccentState = want ? 4 /* ACRYLICBLURBEHIND */ : 0, AccentFlags = 2, GradientColor = AcrylicTint };
-        int size = Marshal.SizeOf(accent);
-        var ptr = Marshal.AllocHGlobal(size);
-        try
-        {
-            Marshal.StructureToPtr(accent, ptr, false);
-            var data = new CompositionData { Attribute = 19 /* WCA_ACCENT_POLICY */, Data = ptr, SizeOfData = size };
-            acrylic = SetWindowCompositionAttribute(Handle, ref data) != 0 && want;
-            BackColor = acrylic ? Color.Black : Theme.Back;
-            input.BackColor = acrylic ? Color.Black : FieldColor; // black = see-through on acrylic
-            input.ForeColor = Fg;
-            input.CueColor = Dim;
-        }
-        catch { acrylic = false; BackColor = Theme.Back; }
-        finally { Marshal.FreeHGlobal(ptr); }
+        acrylic = Acrylic.Set(Handle, !Theme.Light, AcrylicTint);
+        BackColor = acrylic ? Color.Black : Theme.Back;
+        input.BackColor = acrylic ? Color.Black : FieldColor; // black = see-through on acrylic
+        input.ForeColor = Fg;
+        input.CueColor = Dim;
     }
 
     double Seconds => (DateTime.Now - epoch).TotalSeconds;

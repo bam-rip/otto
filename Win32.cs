@@ -3,6 +3,34 @@ using System.Text;
 
 namespace Otto;
 
+/// Windows' live "acrylic" blur behind a window (Win10 1803+): it updates as things move behind and costs no
+/// CPU. With it on, pixels painted fully transparent show the blur, which is why black (alpha 0 from GDI)
+/// means see-through. Used only in the dark theme: dark text would vanish the same way.
+static class Acrylic
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct AccentPolicy { public int AccentState, AccentFlags; public uint GradientColor; public int AnimationId; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct CompositionData { public int Attribute; public IntPtr Data; public int SizeOfData; }
+    [DllImport("user32.dll")] static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref CompositionData data);
+
+    /// Turns the blur on or off; true if it's on now. 'tint' is AABBGGRR (alpha = how solid the tint is).
+    public static bool Set(IntPtr hwnd, bool on, uint tint)
+    {
+        var accent = new AccentPolicy { AccentState = on ? 4 /* ACRYLICBLURBEHIND */ : 0, AccentFlags = 2, GradientColor = tint };
+        int size = Marshal.SizeOf(accent);
+        var ptr = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.StructureToPtr(accent, ptr, false);
+            var data = new CompositionData { Attribute = 19 /* WCA_ACCENT_POLICY */, Data = ptr, SizeOfData = size };
+            return SetWindowCompositionAttribute(hwnd, ref data) != 0 && on;
+        }
+        catch { return false; }
+        finally { Marshal.FreeHGlobal(ptr); }
+    }
+}
+
 /// Window queries shared by the tools that look at the desktop (UiTree, Apps, Desktop) and the windows
 /// that must stay out of screenshots (Overlay).
 static class Win32

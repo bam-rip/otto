@@ -24,11 +24,49 @@ static class SettingsWindow
         f.ShowDialog();
     }
 
+    /// Developers (--settings-selftest): scrolls, changes section and switches theme in code, capturing the
+    /// window after each, with no simulated mouse or keys. Pictures and a log go to %TEMP%\otto-selftest-*.
+    internal static void SelfTest()
+    {
+        var log = new System.Text.StringBuilder();
+        bool wasLight = Theme.Light;
+        using var f = new SettingsForm(AI);
+        f.Show();
+        void Settle() { for (int i = 0; i < 20; i++) { Application.DoEvents(); Thread.Sleep(30); } }
+        void Shot(string name)
+        {
+            Settle();
+            using var bmp = new Bitmap(f.Width, f.Height);
+            using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(f.Location, Point.Empty, f.Size);
+            bmp.Save(Path.Combine(Path.GetTempPath(), $"otto-selftest-{name}.png"));
+        }
+        Settle();
+        f.ScrollContent(5000);
+        Settle();
+        log.AppendLine($"AI scrolled to {f.ContentScroll}");
+        f.OpenSection(Mail);
+        Settle();
+        log.AppendLine($"after opening Email: page top {f.PageTop} (expect {f.LogicalToDeviceUnits(26)}), scroll {f.ContentScroll}");
+        Shot("mail");
+        try
+        {
+            Theme.Light = true; f.Recolor(); f.OpenSection(Look); Shot("light");
+            log.AppendLine($"light: sidebar glass {f.HasGlass}");
+            Theme.Light = false; f.Recolor(); f.OpenSection(Look); Shot("dark");
+            log.AppendLine($"dark: sidebar glass {f.HasGlass}");
+        }
+        finally { Theme.Light = wasLight; }
+        f.Close();
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-selftest.txt"), log.ToString());
+    }
+
     /// Opened from the tray or the panel's gear.
     sealed class SettingsForm : Form
     {
         readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true };
-        readonly FlowLayoutPanel nav = new() { Dock = DockStyle.Left, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        readonly NavStack nav = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        readonly Panel navHost = new() { Dock = DockStyle.Left, Width = 250 }; // keeps the sidebar's place in the layout
+        GlassSidebar? glass; // dark theme: the sidebar is drawn in its own blurred window over navHost
         readonly List<NavButton> navButtons = new();
         string current = "";
         const int W = 560; // content column width
@@ -43,16 +81,26 @@ static class SettingsWindow
             Font = new Font("Segoe UI", 9.75f);
             ClientSize = new Size(900, 660);
             MinimumSize = new Size(760, 480);
-            BackColor = Ui.Back;
-            ForeColor = Ui.Fg;
             KeyPreview = true;
-            KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
-            HandleCreated += (_, _) => Ui.DarkTitleBar(this);
+            KeyDown += (_, e) =>
+            {
+                if (e.KeyCode == Keys.Escape) Close();
+                // the glass sidebar can't take keyboard focus, so Ctrl+Tab moves between sections instead
+                else if (e.Control && e.KeyCode is Keys.Tab or Keys.PageDown or Keys.PageUp)
+                {
+                    int i = Array.FindIndex(Sections, x => x.name == current);
+                    int step = e.KeyCode == Keys.PageUp || e.KeyCode == Keys.Tab && e.Shift ? -1 : 1;
+                    Open(Sections[(i + step + Sections.Length) % Sections.Length].name);
+                    e.Handled = e.SuppressKeyPress = true;
+                }
+            };
+            Shown += (_, _) => ApplyColors();
+            LocationChanged += (_, _) => glass?.Follow();
+            SizeChanged += (_, _) => glass?.Follow();
+            FormClosed += (_, _) => glass?.Dispose();
 
-            nav.Width = 250;
-            nav.BackColor = Ui.Side;
             nav.Padding = new Padding(10, 18, 10, 10);
-            nav.Controls.Add(new Label { Text = "Settings", AutoSize = true, Font = new Font("Segoe UI Light", 18f), ForeColor = Ui.Fg, Margin = new Padding(10, 0, 0, 18) });
+            nav.Controls.Add(new NavTitle("Settings") { Width = 220, Height = 52, Margin = new Padding(0, 0, 0, 14) });
             foreach (var (name, glyph) in Sections)
             {
                 var b = new NavButton(name, glyph) { Width = 230 };
@@ -61,10 +109,46 @@ static class SettingsWindow
                 nav.Controls.Add(b);
             }
             content.Padding = new Padding(36, 26, 24, 24);
+            navHost.Controls.Add(nav);
             Controls.Add(content);
-            Controls.Add(nav);
+            Controls.Add(navHost);
+            ApplyColors();
             Open(start);
-            Shown += (_, _) => navButtons.FirstOrDefault(b => b.Selected)?.Focus(); // not the first dropdown, which would show highlighted
+            Shown += (_, _) => ActiveControl = null; // not the first dropdown, which would show highlighted
+        }
+
+        // for SelfTest
+        internal void ScrollContent(int y) => content.AutoScrollPosition = new Point(0, y);
+        internal int ContentScroll => -content.AutoScrollPosition.Y;
+        internal int PageTop => content.Controls.Count > 0 ? content.Controls[0].Top : -1;
+        internal void OpenSection(string name) => Open(name);
+        internal void Recolor() => ApplyColors();
+        internal bool HasGlass => glass != null;
+
+        /// Colours for the current theme, and the glass sidebar on in dark mode (off in light, like the panel).
+        void ApplyColors()
+        {
+            BackColor = content.BackColor = Ui.Back;
+            ForeColor = Ui.Fg;
+            navHost.BackColor = Ui.Side;
+            if (IsHandleCreated) Ui.DarkTitleBar(this);
+            bool wantGlass = !Theme.Light && Visible;
+            if (wantGlass && glass == null)
+            {
+                glass = new GlassSidebar(this, navHost);
+                if (!glass.IsGlass) { glass.Dispose(); glass = null; } // Windows refused the blur: stay solid
+            }
+            else if (!wantGlass && glass != null)
+            {
+                nav.Parent = navHost; // out of the glass window first: disposing it would dispose the sidebar with it
+                glass.Dispose();
+                glass = null;
+            }
+            nav.SeeThrough = glass != null;
+            nav.BackColor = glass != null ? Color.Black : Ui.Side;
+            nav.Parent = glass != null ? glass : navHost;
+            glass?.Follow();
+            nav.Invalidate(true);
         }
 
         void Open(string name)
@@ -75,12 +159,13 @@ static class SettingsWindow
             content.SuspendLayout();
             foreach (Control c in content.Controls) c.Dispose();
             content.Controls.Clear();
+            // back to the top first: a page added while scrolled is placed relative to the old scroll position
+            content.AutoScrollPosition = Point.Empty;
             var page = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Location = new Point(36, 26) };
             page.Controls.Add(new Label { Text = name, AutoSize = true, Font = new Font("Segoe UI Light", 20f), ForeColor = Ui.Fg, Margin = new Padding(0, 0, 0, 16) });
             Build(name, page);
             content.Controls.Add(page);
             content.ResumeLayout();
-            content.AutoScrollPosition = Point.Empty;
         }
 
         void Build(string name, FlowLayoutPanel p)
@@ -389,7 +474,8 @@ static class SettingsWindow
             {
                 Theme.Light = i == 1;
                 Theme.Apply();
-                Open(Look); // repaint this window in the new colours
+                ApplyColors(); // this window too: background, sidebar, title bar
+                Open(Look);
             }));
             theme.Controls.Add(Ui.Hint("Dark has a see-through blurred background; light is solid.", W - 40));
 
@@ -429,43 +515,34 @@ static class SettingsWindow
         void BuildQuick(FlowLayoutPanel p)
         {
             var card = Ui.Card(p, "Your quick actions", "One-click requests for things you ask often. They show at the top of a new chat and in the tray menu.");
-            var list = Ui.List(W - 40, 220);
-            card.Controls.Add(list);
-            var row = Ui.Row();
-            var add = Ui.Button("Add…", primary: true);
-            var edit = Ui.Button("Edit…");
-            var remove = Ui.Button("Remove");
-            row.Controls.AddRange(new Control[] { add, edit, remove });
-            card.Controls.Add(row);
+            var items = Ui.Stack();
+            card.Controls.Add(items);
+            var add = Ui.Button("Add a quick action…", primary: true);
+            card.Controls.Add(add);
             void Fill()
             {
-                list.Items.Clear();
-                foreach (var a in QuickActions.All) list.Items.Add($"{a.Name}  ·  {a.Prompt.Clip(60)}");
-                edit.Enabled = remove.Enabled = list.SelectedIndex >= 0;
+                Ui.Refill(items, QuickActions.All.Select((a, i) =>
+                {
+                    var edit = Ui.Button("Edit…", small: true);
+                    var remove = Ui.Button("Remove", small: true);
+                    edit.Click += (_, _) =>
+                    {
+                        var all = QuickActions.All;
+                        if (i < all.Count && QuickActionPrompt.Ask(this, all[i]) is QuickActions.Action changed) { all[i] = changed; QuickActions.All = all; Fill(); }
+                    };
+                    remove.Click += (_, _) =>
+                    {
+                        var all = QuickActions.All;
+                        if (i < all.Count) { all.RemoveAt(i); QuickActions.All = all; Fill(); }
+                    };
+                    return Ui.ItemCard(a.Name, a.Prompt, null, edit, remove);
+                }), "No quick actions yet. Example: \"Morning briefing\" that asks \"Summarise my unread email and what's on my calendar today\".");
             }
-            list.SelectedIndexChanged += (_, _) => edit.Enabled = remove.Enabled = list.SelectedIndex >= 0;
             add.Click += (_, _) =>
             {
                 if (QuickActionPrompt.Ask(this, null) is QuickActions.Action a) { var all = QuickActions.All; all.Add(a); QuickActions.All = all; Fill(); }
             };
-            edit.Click += (_, _) =>
-            {
-                int i = list.SelectedIndex;
-                var all = QuickActions.All;
-                if (i < 0 || i >= all.Count) return;
-                if (QuickActionPrompt.Ask(this, all[i]) is QuickActions.Action a) { all[i] = a; QuickActions.All = all; Fill(); }
-            };
-            remove.Click += (_, _) =>
-            {
-                int i = list.SelectedIndex;
-                var all = QuickActions.All;
-                if (i < 0 || i >= all.Count) return;
-                all.RemoveAt(i);
-                QuickActions.All = all;
-                Fill();
-            };
             Fill();
-            card.Controls.Add(Ui.Hint("Example: name \"Morning briefing\", request \"Summarise my unread email and what's on my calendar today\".", W - 40));
         }
 
         // ---------------- reminders ----------------
@@ -473,21 +550,17 @@ static class SettingsWindow
         void BuildReminders(FlowLayoutPanel p)
         {
             var card = Ui.Card(p, "Reminders and scheduled tasks", "To add one, just ask Otto, for example \"remind me at 5 to call Mum\" or \"every weekday at 8, summarise my unread email\".");
-            var list = Ui.List(W - 40, 260);
-            card.Controls.Add(list);
-            var cancel = Ui.Button("Cancel selected");
-            card.Controls.Add(cancel);
-            List<Schedule.Item> items = new();
+            var items = Ui.Stack();
+            card.Controls.Add(items);
             void Fill()
             {
-                items = Schedule.All();
-                list.Items.Clear();
-                foreach (var i in items) list.Items.Add($"{(i.Kind == "task" ? "Task" : "Reminder")}: {i.Text.Clip(50)}  ·  {Schedule.When(i)}");
-                if (items.Count == 0) list.Items.Add("Nothing scheduled.");
-                cancel.Enabled = false;
+                Ui.Refill(items, Schedule.All().Select(i =>
+                {
+                    var cancel = Ui.Button("Cancel", small: true);
+                    cancel.Click += (_, _) => { Schedule.Remove(i.Id); Fill(); };
+                    return Ui.ItemCard(i.Text, Schedule.When(i), i.Kind == "task" ? "TASK" : "REMINDER", cancel);
+                }), "Nothing scheduled yet.");
             }
-            list.SelectedIndexChanged += (_, _) => cancel.Enabled = list.SelectedIndex >= 0 && list.SelectedIndex < items.Count;
-            cancel.Click += (_, _) => { if (list.SelectedIndex >= 0 && list.SelectedIndex < items.Count) { Schedule.Remove(items[list.SelectedIndex].Id); Fill(); } };
             Fill();
             card.Controls.Add(Ui.Hint("Scheduled tasks run in the background without using your screen. Anything that needs your OK is left for you and mentioned in the notification.", W - 40));
         }
@@ -498,16 +571,20 @@ static class SettingsWindow
         {
             var card = Ui.Card(p, "Monthly limit", "Otto warns you at 80% and stops at the limit, even partway through a task. It starts again on the 1st.");
             var row = Ui.Row();
-            row.Controls.Add(new Label { Text = "US$", AutoSize = true, ForeColor = Ui.Fg, Margin = new Padding(0, 7, 6, 0) });
-            var limit = new NumericUpDown
-            {
-                Width = 110, DecimalPlaces = 2, Increment = 1, Maximum = 10_000, Minimum = 0, Value = (decimal)Spending.Limit,
-                BackColor = Ui.Field, ForeColor = Ui.Fg, BorderStyle = BorderStyle.FixedSingle,
-            };
+            row.Controls.Add(new Label { Text = "US$", AutoSize = true, ForeColor = Ui.Fg, Margin = new Padding(0, 9, 6, 0) });
+            var limit = Ui.TextBox(110, Spending.Limit.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture));
             row.Controls.Add(limit);
-            row.Controls.Add(new Label { Text = "a month (0 = no limit)", AutoSize = true, ForeColor = Ui.Dim, Margin = new Padding(8, 7, 0, 0) });
+            var limitNote = new Label { Text = "a month (0 = no limit)", AutoSize = true, ForeColor = Ui.Dim, Margin = new Padding(0, 9, 0, 0) };
+            row.Controls.Add(limitNote);
             card.Controls.Add(row);
-            limit.ValueChanged += (_, _) => Spending.Limit = (double)limit.Value;
+            limit.TextChanged += (_, _) =>
+            {
+                var t = limit.Text.Trim().TrimStart('$');
+                bool ok = decimal.TryParse(t.Length == 0 ? "0" : t, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0 && v <= 10_000;
+                if (ok) Spending.Limit = (double)v;
+                limitNote.Text = ok ? "a month (0 = no limit)" : "type an amount, like 5 or 12.50";
+                limitNote.ForeColor = ok ? Ui.Dim : Color.FromArgb(232, 72, 85);
+            };
 
             var used = Ui.Card(p, "This month", null);
             used.Controls.Add(new Label { Text = $"US${Spending.ThisMonthTotal():0.00}", AutoSize = true, Font = new Font("Segoe UI Light", 22f), ForeColor = Ui.Fg });
@@ -638,16 +715,95 @@ static class SettingsWindow
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            g.Clear(Parent?.BackColor ?? Ui.Side);
-            if (selected || hot) using (var b = new SolidBrush(selected ? Ui.Selected : Ui.Hover)) g.FillRectangle(b, ClientRectangle);
+            bool glass = Parent is NavStack { SeeThrough: true };
+            g.Clear(glass ? Color.Transparent : Parent?.BackColor ?? Ui.Side);
+            if (selected || hot)
+                using (var b = new SolidBrush(glass ? Theme.Over(selected ? 34 : 18) : selected ? Ui.Selected : Ui.Hover)) g.FillRectangle(b, ClientRectangle);
             if (selected) using (var a = new SolidBrush(ChatPanel.Accent)) g.FillRectangle(a, 0, 8, LogicalToDeviceUnits(3), Height - 16);
             using var gf = new Font(ChatPanel.GlyphFont, 11f);
-            TextRenderer.DrawText(g, glyph, gf, new Rectangle(LogicalToDeviceUnits(14), 0, LogicalToDeviceUnits(24), Height), Ui.Fg,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, Text, Font, new Rectangle(LogicalToDeviceUnits(48), 0, Width - LogicalToDeviceUnits(52), Height), Ui.Fg,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            Ui.Text(g, glass, glyph, gf, new Rectangle(LogicalToDeviceUnits(14), 0, LogicalToDeviceUnits(24), Height), center: true);
+            Ui.Text(g, glass, Text, Font, new Rectangle(LogicalToDeviceUnits(48), 0, Width - LogicalToDeviceUnits(52), Height));
             if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(g, ClientRectangle);
         }
+    }
+
+    /// "Settings" at the top of the sidebar, painted so it works on glass too.
+    sealed class NavTitle : Control
+    {
+        public NavTitle(string text)
+        {
+            Text = text;
+            Font = new Font("Segoe UI Light", 18f);
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            bool glass = Parent is NavStack { SeeThrough: true };
+            e.Graphics.Clear(glass ? Color.Transparent : Parent?.BackColor ?? Ui.Side);
+            Ui.Text(e.Graphics, glass, Text, Font, new Rectangle(LogicalToDeviceUnits(8), 0, Width, Height));
+        }
+    }
+
+    /// The sidebar's list. On glass its background is painted fully transparent, so the blur shows.
+    sealed class NavStack : FlowLayoutPanel
+    {
+        public bool SeeThrough { get; set; }
+        public NavStack() => SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+        protected override void OnPaintBackground(PaintEventArgs e) { if (SeeThrough) e.Graphics.Clear(Color.Transparent); else base.OnPaintBackground(e); }
+    }
+
+    /// The dark-theme sidebar: a small borderless window with Windows' live blur (the same as the panel's),
+    /// laid exactly over the settings window's left edge and moved with it. Blur applies to whole windows, and
+    /// ordinary controls look washed out on it, which is why only the self-drawn sidebar gets one. It never
+    /// takes focus, so clicking it doesn't make the settings window look inactive.
+    sealed class GlassSidebar : Form
+    {
+        readonly Form owner;
+        readonly Control spot;
+        public bool IsGlass { get; }
+
+        public GlassSidebar(Form owner, Control spot)
+        {
+            this.owner = owner;
+            this.spot = spot;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            BackColor = Color.Black;
+            Font = owner.Font;
+            AutoScaleMode = AutoScaleMode.None;
+            Owner = owner;
+            Follow();
+            Show(owner);
+            IsGlass = Acrylic.Set(Handle, true, ChatPanel.AcrylicTint);
+        }
+
+        public void Follow()
+        {
+            if (owner.WindowState == FormWindowState.Minimized || !spot.IsHandleCreated) return;
+            Bounds = spot.RectangleToScreen(spot.ClientRectangle);
+        }
+
+        protected override bool ShowWithoutActivation => true;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x08000000 /* WS_EX_NOACTIVATE */ | 0x80 /* WS_EX_TOOLWINDOW */;
+                return cp;
+            }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x21 /* WM_MOUSEACTIVATE */) { m.Result = (IntPtr)3 /* MA_NOACTIVATE */; return; }
+            base.WndProc(ref m);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(Color.Transparent);
     }
 }
 
@@ -686,30 +842,95 @@ static class Ui
 
     public static FlowLayoutPanel Row() => new() { AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 4) };
 
-    public static TextBox TextBox(int width, string text = "", string placeholder = "", bool password = false, bool multiline = false) => new()
-    {
-        Width = width, Text = text, PlaceholderText = placeholder, UseSystemPasswordChar = password, Multiline = multiline,
-        ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None, AcceptsReturn = multiline,
-        BackColor = Field, ForeColor = Fg, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 2, 10, 2), Font = new Font("Segoe UI", 10f),
-    };
+    /// A text field the same height as the buttons, with room around the text (see FieldBox).
+    public static FieldBox TextBox(int width, string text = "", string placeholder = "", bool password = false, bool multiline = false) =>
+        new(multiline) { Width = width, Text = text, PlaceholderText = placeholder, UseSystemPasswordChar = password, Margin = new Padding(0, 2, 10, 2) };
 
-    public static ComboBox Combo(int width, bool editable = false) => new()
-    {
-        Width = width, DropDownStyle = editable ? ComboBoxStyle.DropDown : ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
-        BackColor = Field, ForeColor = Fg, Margin = new Padding(0, 2, 10, 2), Font = new Font("Segoe UI", 10f),
-    };
+    public const int ControlHeight = 34; // buttons, fields and dropdowns all line up at this height
 
-    public static ListBox List(int width, int height) => new()
+    /// A dropdown that draws its own items, so the list is dark in the dark theme (Windows' default list is always
+    /// white), and is the same height as the buttons beside it.
+    public static ComboBox Combo(int width, bool editable = false)
     {
-        Width = width, Height = height, BackColor = Field, ForeColor = Fg, BorderStyle = BorderStyle.None, IntegralHeight = false,
-        Font = new Font("Segoe UI", 10f), Margin = new Padding(0, 6, 0, 6),
-    };
+        var c = new ComboBox
+        {
+            Width = width, DropDownStyle = editable ? ComboBoxStyle.DropDown : ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
+            BackColor = Field, ForeColor = Fg, Margin = new Padding(0, 2, 10, 2), Font = new Font("Segoe UI", 10f),
+            DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = ControlHeight - 8, MaxDropDownItems = 12,
+        };
+        c.DrawItem += (_, e) =>
+        {
+            if (e.Index < 0) return;
+            bool chosen = (e.State & DrawItemState.Selected) != 0 && (e.State & DrawItemState.ComboBoxEdit) == 0;
+            using (var b = new SolidBrush(chosen ? ChatPanel.Accent : Field)) e.Graphics.FillRectangle(b, e.Bounds);
+            TextRenderer.DrawText(e.Graphics, c.GetItemText(c.Items[e.Index]), c.Font, Rectangle.Inflate(e.Bounds, -6, 0), chosen ? Color.White : Fg,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        };
+        // Windows' dark style for the dropdown's own scrollbar and edges
+        if (!Theme.Light) c.HandleCreated += (_, _) => SetWindowTheme(c.Handle, "DarkMode_CFD", null);
+        return c;
+    }
 
-    public static Button Button(string text, bool primary = false)
+    /// A vertical stack for item cards (quick actions, reminders).
+    public static FlowLayoutPanel Stack() => new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = new Padding(0, 8, 0, 8) };
+
+    /// Replaces a stack's cards; shows 'empty' when there are none.
+    public static void Refill(FlowLayoutPanel stack, IEnumerable<Control> cards, string empty)
+    {
+        stack.SuspendLayout();
+        foreach (Control c in stack.Controls) c.Dispose();
+        stack.Controls.Clear();
+        foreach (var c in cards) stack.Controls.Add(c);
+        if (stack.Controls.Count == 0) stack.Controls.Add(Hint(empty, CardWidth - 50));
+        stack.ResumeLayout();
+    }
+
+    static Color Inset => Theme.Light ? Color.FromArgb(244, 244, 244) : Color.FromArgb(52, 52, 52);
+
+    /// One item as its own block: an optional small label (TASK), a title, the detail wrapped underneath, and its
+    /// buttons on the right.
+    public static Control ItemCard(string title, string detail, string? tag, params Button[] buttons)
+    {
+        var card = new TableLayoutPanel
+        {
+            ColumnCount = 2, RowCount = 1, AutoSize = true, BackColor = Inset, Width = CardWidth - 40,
+            MinimumSize = new Size(CardWidth - 40, 0), MaximumSize = new Size(CardWidth - 40, 0),
+            Padding = new Padding(14, 10, 10, 10), Margin = new Padding(0, 0, 0, 8),
+        };
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var text = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = Padding.Empty };
+        int textWidth = CardWidth - 40 - 24 - buttons.Length * 90;
+        if (tag != null) text.Controls.Add(new Label { Text = tag, AutoSize = true, ForeColor = ChatPanel.Accent, Font = new Font("Segoe UI Semibold", 7.5f), Margin = new Padding(0, 0, 0, 2) });
+        text.Controls.Add(new Label { Text = title, UseMnemonic = false, AutoSize = true, MaximumSize = new Size(textWidth, 0), ForeColor = Fg, Font = new Font("Segoe UI Semibold", 10f), Margin = new Padding(0, 0, 0, 2) });
+        text.Controls.Add(new Label { Text = detail, UseMnemonic = false, AutoSize = true, MaximumSize = new Size(textWidth, 0), ForeColor = Dim, Margin = Padding.Empty });
+        var actions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Anchor = AnchorStyles.Right, Margin = Padding.Empty };
+        actions.Controls.AddRange(buttons);
+        card.Controls.Add(text, 0, 0);
+        card.Controls.Add(actions, 1, 0);
+        return card;
+    }
+
+    /// Text that also works on glass: there GDI+ is used, because ordinary (GDI) text leaves see-through holes.
+    public static void Text(Graphics g, bool glass, string text, Font font, Rectangle r, bool center = false)
+    {
+        if (!glass)
+        {
+            TextRenderer.DrawText(g, text, font, r, Fg, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis |
+                                                         (center ? TextFormatFlags.HorizontalCenter : 0));
+            return;
+        }
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        using var fmt = new StringFormat { LineAlignment = StringAlignment.Center, Alignment = center ? StringAlignment.Center : StringAlignment.Near, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+        using var b = new SolidBrush(Fg);
+        g.DrawString(text, font, b, r, fmt);
+    }
+
+    public static Button Button(string text, bool primary = false, bool small = false)
     {
         var b = new Button
         {
-            Text = text, AutoSize = true, MinimumSize = new Size(96, 34), Padding = new Padding(10, 0, 10, 0), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+            Text = text, AutoSize = true, MinimumSize = new Size(small ? 76 : 96, small ? 30 : ControlHeight), Padding = new Padding(10, 0, 10, 0), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
             BackColor = primary ? ChatPanel.Accent : Theme.Light ? Color.FromArgb(230, 230, 230) : Color.FromArgb(62, 62, 62),
             ForeColor = primary ? Color.White : Fg, Margin = new Padding(0, 2, 8, 2), Font = new Font("Segoe UI", 9.75f),
         };
@@ -786,6 +1007,16 @@ static class Ui
     {
         int on = dark ?? !Theme.Light ? 1 : 0;
         DwmSetWindowAttribute(f.Handle, 20, ref on, sizeof(int));
+        // Windows only repaints the title bar's colours when the frame changes, so ask it to (matters when switching theme)
+        SetWindowPos(f.Handle, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020); // NOSIZE NOMOVE NOZORDER NOACTIVATE FRAMECHANGED
+        if (f.Visible)
+        {
+            // and on Windows 10 it only takes the new colour on the next active/inactive change, so make one,
+            // ending on the window's real state
+            bool active = Form.ActiveForm == f;
+            SendMessage(f.Handle, 0x0086 /* WM_NCACTIVATE */, (IntPtr)(active ? 0 : 1), IntPtr.Zero);
+            SendMessage(f.Handle, 0x0086, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
+        }
         DarkScrollbars(f);
     }
 
@@ -804,6 +1035,8 @@ static class Ui
     }
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr hwnd, string? app, string? idList);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 }
@@ -875,5 +1108,58 @@ static class QuickActionPrompt
         Ui.DialogButtons(f, grid, existing == null ? "Add" : "Save");
         if (f.ShowDialog(owner) != DialogResult.OK || name.Text.Trim().Length == 0 || prompt.Text.Trim().Length == 0) return null;
         return new(name.Text.Trim(), prompt.Text.Trim());
+    }
+}
+
+/// A text field with room around the text and the same height as the buttons, which a plain Windows text box
+/// can't do: the box sits inside a padded frame that draws the border (blue while you type in it).
+sealed class FieldBox : Panel
+{
+    public readonly TextBox Box;
+    readonly bool multiline;
+
+    public FieldBox(bool multiline = false)
+    {
+        this.multiline = multiline;
+        Box = new TextBox
+        {
+            BorderStyle = BorderStyle.None, Multiline = multiline, AcceptsReturn = multiline,
+            ScrollBars = multiline ? ScrollBars.Vertical : ScrollBars.None,
+            BackColor = Ui.Field, ForeColor = Ui.Fg, Font = new Font("Segoe UI", 10f),
+        };
+        BackColor = Ui.Field;
+        Height = multiline ? 120 : Ui.ControlHeight;
+        Cursor = Cursors.IBeam;
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer, true);
+        Controls.Add(Box);
+        Box.TextChanged += (_, e) => OnTextChanged(e);
+        Box.GotFocus += (_, _) => Invalidate();
+        Box.LostFocus += (_, _) => Invalidate();
+        if (multiline && !Theme.Light) Box.HandleCreated += (_, _) => Ui.DarkScrollbars(Box);
+    }
+
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public override string Text { get => Box?.Text ?? ""; set { if (Box != null) Box.Text = value ?? ""; } }
+    public string PlaceholderText { get => Box.PlaceholderText; set => Box.PlaceholderText = value; }
+    public bool UseSystemPasswordChar { get => Box.UseSystemPasswordChar; set => Box.UseSystemPasswordChar = value; }
+    public bool ReadOnly { get => Box.ReadOnly; set { Box.ReadOnly = value; Invalidate(); } }
+    public new bool Focus() => Box.Focus();
+
+    protected override void OnClick(EventArgs e) { Box.Focus(); base.OnClick(e); }
+
+    protected override void OnLayout(LayoutEventArgs e)
+    {
+        base.OnLayout(e);
+        int pad = LogicalToDeviceUnits(10);
+        if (multiline) Box.SetBounds(pad, pad / 2 + 2, Width - pad - 4, Height - pad - 4);
+        else Box.SetBounds(pad, (Height - Box.Height) / 2, Width - 2 * pad, Box.Height); // text centred top to bottom
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var border = Box.Focused ? ChatPanel.Accent : Theme.Light ? Color.FromArgb(200, 200, 200) : Color.FromArgb(78, 78, 78);
+        using var pen = new Pen(border, Box.Focused ? 2 : 1);
+        e.Graphics.DrawRectangle(pen, Box.Focused ? new Rectangle(1, 1, Width - 2, Height - 2) : new Rectangle(0, 0, Width - 1, Height - 1));
     }
 }
