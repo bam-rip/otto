@@ -47,7 +47,7 @@ static class Ui
     /// white), and is the same height as the buttons beside it.
     public static ComboBox Combo(int width, bool editable = false)
     {
-        var c = new ComboBox
+        var c = new ThemedCombo
         {
             Width = width, DropDownStyle = editable ? ComboBoxStyle.DropDown : ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
             BackColor = Field, ForeColor = Fg, Margin = new Padding(0, 2, 10, 2), Font = new Font("Segoe UI", 10f),
@@ -356,5 +356,95 @@ sealed class FieldBox : Panel
         var border = Box.Focused ? ChatPanel.Accent : Theme.Light ? Color.FromArgb(200, 200, 200) : Color.FromArgb(78, 78, 78);
         using var pen = new Pen(border, Box.Focused ? 2 : 1);
         e.Graphics.DrawRectangle(pen, Box.Focused ? new Rectangle(1, 1, Width - 2, Height - 2) : new Rectangle(0, 0, Width - 1, Height - 1));
+    }
+}
+
+/// A dropdown whose frame matches the fields: Windows draws a combo box's border, arrow and open list frame in its
+/// own light colours whatever the back colour is, so this paints the border and arrow itself and gives the open
+/// list a frame in the same colour.
+sealed class ThemedCombo : ComboBox
+{
+    const int WM_PAINT = 0x000F, WM_CTLCOLORLISTBOX = 0x0134;
+    static Color Border(bool active) => active ? ChatPanel.Accent : Theme.Light ? Color.FromArgb(200, 200, 200) : Color.FromArgb(78, 78, 78);
+
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        if (m.Msg == WM_PAINT) PaintFrame();
+        // the open list is about to draw: give its window our border instead of the default light one
+        else if (m.Msg == WM_CTLCOLORLISTBOX && m.LParam != IntPtr.Zero && m.LParam != listFramed) FrameList(m.LParam);
+    }
+
+    /// Dropdowns you can type in have an edit box inside; give its text the same left room as the fields.
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        if (DropDownStyle != ComboBoxStyle.DropDown) return;
+        var info = new COMBOBOXINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<COMBOBOXINFO>() };
+        if (GetComboBoxInfo(Handle, ref info) && info.hwndItem != IntPtr.Zero)
+            SendMessage(info.hwndItem, 0x00D3 /* EM_SETMARGINS */, (IntPtr)1 /* EC_LEFTMARGIN */, (IntPtr)LogicalToDeviceUnits(4));
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    struct COMBOBOXINFO { public int cbSize; public Win32.RECT rcItem, rcButton; public int stateButton; public IntPtr hwndCombo, hwndItem, hwndList; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetComboBoxInfo(IntPtr h, ref COMBOBOXINFO info);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+    protected override void OnDropDownClosed(EventArgs e) { base.OnDropDownClosed(e); Invalidate(); }
+
+    /// Paints over Windows' frame and arrow button: our border, a flat button area and a chevron.
+    void PaintFrame()
+    {
+        using var g = Graphics.FromHwnd(Handle);
+        var r = ClientRectangle;
+        int arrowW = LogicalToDeviceUnits(26);
+        var arrow = new Rectangle(r.Right - arrowW, 1, arrowW - 1, r.Height - 2);
+        using (var back = new SolidBrush(BackColor)) g.FillRectangle(back, arrow);
+        using (var gf = new Font(ChatPanel.GlyphFont, 8f))
+            TextRenderer.DrawText(g, "\uE70D", gf, arrow, Enabled ? ForeColor : Ui.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        bool active = Focused || DroppedDown;
+        using var pen = new Pen(Border(active), active ? 2 : 1);
+        g.DrawRectangle(pen, active ? new Rectangle(1, 1, r.Width - 2, r.Height - 2) : new Rectangle(0, 0, r.Width - 1, r.Height - 1));
+    }
+
+    IntPtr listFramed;
+
+    /// The open list is its own window with a WS_BORDER frame Windows paints light; swap that for a 1px frame we
+    /// paint in the border colour.
+    void FrameList(IntPtr list)
+    {
+        listFramed = list;
+        NativeList.Attach(list, () => Border(false));
+    }
+
+    /// Paints the list window's 1px non-client border.
+    sealed class NativeList : NativeWindow
+    {
+        const int WM_NCPAINT = 0x0085;
+        readonly Func<Color> color;
+        NativeList(Func<Color> color) => this.color = color;
+
+        public static void Attach(IntPtr hwnd, Func<Color> color) => new NativeList(color).AssignHandle(hwnd);
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+            if (m.Msg != WM_NCPAINT) return;
+            var dc = GetWindowDC(Handle);
+            try
+            {
+                if (!GetWindowRect(Handle, out var wr)) return;
+                using var g = Graphics.FromHdc(dc);
+                using var pen = new Pen(color());
+                g.DrawRectangle(pen, 0, 0, wr.Right - wr.Left - 1, wr.Bottom - wr.Top - 1);
+            }
+            finally { ReleaseDC(Handle, dc); }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetWindowDC(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Win32.RECT r);
     }
 }

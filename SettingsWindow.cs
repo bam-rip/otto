@@ -47,6 +47,9 @@ static partial class SettingsWindow
         Settle();
         log.AppendLine($"after opening Email: page top {f.PageTop} (expect 26: pages start at the top), scroll {f.ContentScroll}");
         Shot("mail");
+        f.OpenSection(AI);
+        f.ScrollContent(330); // down to the model pickers (dropdowns you can also type in)
+        Shot("models");
         try
         {
             Theme.Light = true; f.Recolor(); f.OpenSection(Look); Shot("light");
