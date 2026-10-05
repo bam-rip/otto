@@ -109,24 +109,15 @@ static class Graph
 
     // ---------------- tools ----------------
 
-    public static JsonNode ToolDefinitions() => JsonNode.Parse("""
+    public static JsonNode ToolDefinitions()
+    {
+        var tools = EmailTools.Definitions("id, from, subject, date, read/unread and a one-line preview", "inbox (default), sentitems, drafts, junkemail, archive");
+        foreach (var t in Calendar.AsArray()) tools.Add(t!.DeepClone());
+        return tools;
+    }
+
+    static readonly JsonNode Calendar = JsonNode.Parse("""
     [
-      {"name":"email_list","description":"List emails from the user's mailbox, newest first. Returns id, from, subject, date, read/unread and a one-line preview.",
-       "input_schema":{"type":"object","properties":{
-         "folder":{"type":"string","description":"inbox (default), sentitems, drafts, junkemail, archive"},
-         "unread_only":{"type":"boolean"},
-         "search":{"type":"string","description":"words to search for (sender, subject, body)"},
-         "count":{"type":"integer","description":"default 10, max 25"}}}},
-      {"name":"email_read","description":"Read one email in full (by id from email_list). Marks it as read.",
-       "input_schema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}},
-      {"name":"email_draft","description":"Save an email as a draft without sending it. Use this when the user might want to check it first.",
-       "input_schema":{"type":"object","properties":{"to":{"type":"array","items":{"type":"string"}},"subject":{"type":"string"},"body":{"type":"string"}},"required":["to","subject","body"]}},
-      {"name":"email_send","description":"Send an email (or a reply, with reply_to_id). The user is always asked to approve it first.",
-       "input_schema":{"type":"object","properties":{
-         "to":{"type":"array","items":{"type":"string"}},"cc":{"type":"array","items":{"type":"string"}},
-         "subject":{"type":"string"},"body":{"type":"string"},
-         "reply_to_id":{"type":"string","description":"id of the email being replied to; to/subject can then be left out"}},
-        "required":["body"]}},
       {"name":"calendar_list","description":"List calendar events in a date range (default: today and the next 7 days).",
        "input_schema":{"type":"object","properties":{"from":{"type":"string","description":"date or date-time, e.g. 2026-10-02"},"days":{"type":"integer"}}}},
       {"name":"calendar_add","description":"Add an event to the user's calendar. Times are local, ISO format like 2026-10-03T14:00.",
