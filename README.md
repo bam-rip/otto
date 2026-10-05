@@ -15,7 +15,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **See and control the screen.** It reads windows through Windows' accessibility interface (cheap and accurate), and uses screenshots when it needs to see something visual. It can click, type, drag, scroll and press shortcuts.
 - **Work with your apps and files.** It can open any installed app by name, manage windows, read and write files (including `.docx`), and run PowerShell.
 - **Use the web.** It searches, reads pages, and works inside your normal browser.
-- **Email and calendar** (experimental) for Outlook, Hotmail and Microsoft 365: list, read, draft and send email (always with your approval), and check or add calendar events.
+- **Email** (experimental): list, search, read, draft and send email, always asking before anything is sent. Works with Gmail, Yahoo, iCloud, Fastmail and most other providers through an app password, or with Outlook, Hotmail and Microsoft 365 (which adds the calendar).
 - **Remember things.** It keeps short notes about your apps and preferences, and saves multi-step jobs as routines that replay later without the AI.
 - **Voice.** Push-to-talk dictation (Ctrl+Alt+J). It uses Windows' online speech engine, or your AI provider transcribes the recording (Gemini and OpenAI). What you said goes into the message box for you to check before sending. Otto can also read replies aloud.
 - **Message controls.** Hover a message to copy it, retry Otto's last answer, edit and resend your last message, or undo what Otto just did. Right-click for more.
@@ -76,11 +76,23 @@ Please take these seriously:
 
 You pay your AI provider directly. With the default Claude setup (Haiku for everyday steps, Sonnet only when a task is hard), typical tasks cost **a few US cents**. The panel shows a running total for each chat. Otto keeps costs down by reading the screen as text instead of pictures where it can, batching actions, caching, trimming old screen readings, and replaying saved routines without the AI.
 
+## Email setup (Gmail, Yahoo, iCloud and more)
+
+This feature is experimental and hasn't been fully tested yet.
+
+Email providers don't let apps use your normal password, so you make an *app password* just for Otto. You can delete it any time to cut Otto off.
+
+1. **Gmail:** 2-Step Verification must be on in your Google account. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), name it `Otto` and click **Create**. Other providers have the same thing under "app passwords" in their security settings.
+2. In Otto's settings, under **Other email**, type your address. The server boxes fill in for Gmail, Yahoo, iCloud, Fastmail, AOL, Zoho and GMX; for anything else, copy them from your provider's help pages.
+3. Paste the app password and click **Connect**. Otto checks it works before saving it to Windows Credential Manager.
+
 ## Email and calendar setup (Outlook / Hotmail)
 
 This feature is experimental and hasn't been fully tested yet.
 
 Microsoft requires every app that reads Outlook mail to register itself once. It's free and takes about 5 minutes:
+
+Microsoft no longer lets personal accounts register apps on their own: you need a directory, which you get by joining the free [Microsoft 365 Developer Program](https://developer.microsoft.com/microsoft-365/dev-program) or signing up for Azure. Work and school accounts usually have one already.
 
 1. Go to the [Azure app registrations page](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) and sign in with any Microsoft account.
 2. Click **New registration** and name it `Otto`.
@@ -126,6 +138,7 @@ Otto.exe --overlay-demo                                  # preview the glow
 Otto.exe --settings                                      # just the settings window
 Otto.exe --search "query"                                # what the web_search tool returns
 Otto.exe --render-ui                                     # draws the chat and history views to PNGs in %TEMP%
+Otto.exe --mail-test                                     # 5 newest emails through the connected account
 ```
 
 ## License

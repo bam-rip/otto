@@ -123,6 +123,15 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-search.txt"), outp);
             return;
         }
+        // Otto.exe --mail-test → the 5 newest inbox emails through the IMAP connector, in %TEMP%\otto-mail.txt
+        if (Environment.GetCommandLineArgs().Contains("--mail-test"))
+        {
+            string outp;
+            try { outp = Tools.Run("email_list", new System.Text.Json.Nodes.JsonObject { ["count"] = 5 }, _ => false, CancellationToken.None).GetAwaiter().GetResult(); }
+            catch (Exception e) { outp = "ERROR " + e.Message; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-mail.txt"), outp);
+            return;
+        }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
         if (Environment.GetCommandLineArgs().Contains("--update-test"))
         {

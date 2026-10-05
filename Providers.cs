@@ -165,8 +165,11 @@ static class SettingsWindow
             Padding = new Padding(10),
         };
         const int W = 520; // content width
-        var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(14, 10, 14, 6) };
-        f.Controls.Add(grid);
+        // the settings scroll inside the window (they're taller than some screens); Save/Cancel stay put below
+        var grid = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(14, 10, 14, 6) };
+        var scroller = new Panel { AutoScroll = true, Dock = DockStyle.Fill };
+        scroller.Controls.Add(grid);
+        f.Controls.Add(scroller);
 
         Label Heading(string text) => new() { Text = text, AutoSize = true, Font = new Font("Segoe UI Semibold", 11f), Margin = new Padding(0, 6, 0, 8) };
         Label Caption(string text) => new() { Text = text, AutoSize = true, Margin = new Padding(0, 10, 0, 4) };
@@ -263,6 +266,95 @@ static class SettingsWindow
             finally { if (!signIn.IsDisposed) signIn.Enabled = true; }
         };
 
+        // ---- any other email, over IMAP ----
+        Add(Heading("Other email (Gmail, Yahoo, iCloud and more)"));
+        grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
+        Add(Caption("Email address"));
+        var imapAddress = new TextBox { Width = W, Text = Imap.Address, PlaceholderText = "you@gmail.com" };
+        Add(imapAddress);
+        Add(Caption("App password (not your normal password)"));
+        var imapRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        var imapPassword = new TextBox { Width = W - 130, UseSystemPasswordChar = true };
+        var imapConnect = new Button { AutoSize = true, Padding = new Padding(8, 2, 8, 2), Margin = new Padding(10, 0, 0, 0) };
+        imapRow.Controls.AddRange(new Control[] { imapPassword, imapConnect });
+        Add(imapRow);
+        var servers = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Margin = Padding.Empty };
+        servers.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, W / 2));
+        servers.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, W / 2));
+        var imapServer = new TextBox { Width = W / 2 - 8, Text = Imap.ImapServer, PlaceholderText = "imap.example.com:993" };
+        var smtpServer = new TextBox { Width = W / 2, Text = Imap.SmtpServer, PlaceholderText = "smtp.example.com:465" };
+        servers.Controls.Add(Caption("Incoming (IMAP) server"), 0, 0);
+        servers.Controls.Add(Caption("Outgoing (SMTP) server"), 1, 0);
+        servers.Controls.Add(imapServer, 0, 1);
+        servers.Controls.Add(smtpServer, 1, 1);
+        Add(servers);
+        var imapStatus = Hint("");
+        Add(imapStatus);
+        var appPasswordHelp = new LinkLabel { Text = "How do I get an app password?", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+        Add(appPasswordHelp);
+        void ImapState()
+        {
+            imapConnect.Text = Imap.Connected ? "Disconnect" : "Connect";
+            imapPassword.Enabled = imapAddress.Enabled = imapServer.Enabled = smtpServer.Enabled = !Imap.Connected;
+            imapPassword.PlaceholderText = Imap.Connected ? "Saved" : "Paste the app password";
+            imapStatus.Text = Imap.Connected
+                ? $"Connected to {Imap.Address}. Otto can read and search your email and write drafts, and asks before sending anything." +
+                  (Graph.SignedIn ? " (Outlook is connected too; Otto uses Outlook while it is.)" : "")
+                : "Not connected.";
+        }
+        ImapState();
+        imapAddress.TextChanged += (_, _) =>
+        {
+            // fill in the servers for providers Otto knows
+            if (Imap.Known(imapAddress.Text) is Imap.Servers k)
+            {
+                imapServer.Text = $"{k.Imap}:{k.ImapPort}";
+                smtpServer.Text = $"{k.Smtp}:{k.SmtpPort}";
+            }
+        };
+        appPasswordHelp.LinkClicked += (_, _) =>
+        {
+            var known = Imap.Known(imapAddress.Text);
+            const string steps =
+                "Email providers don't let apps use your normal password. Instead you make an \"app password\" just for Otto. " +
+                "You can delete it any time to cut Otto off.\n\n" +
+                "Gmail: 2-Step Verification must be on in your Google account. Then go to myaccount.google.com/apppasswords, " +
+                "type Otto as the name, and click Create. Copy the 16-letter password into Otto (spaces don't matter).\n\n" +
+                "Yahoo, iCloud, Fastmail and others: look for \"app passwords\" in your account's security settings.";
+            var open = known?.AppPasswordUrl;
+            if (MessageBox.Show(f, steps + (open != null ? "\n\nClick OK to open that page now." : ""), "Getting an app password",
+                    open != null ? MessageBoxButtons.OKCancel : MessageBoxButtons.OK, MessageBoxIcon.Information) == DialogResult.OK && open != null)
+                Tools.OpenUrl(open);
+        };
+        imapConnect.Click += async (_, _) =>
+        {
+            if (Imap.Connected) { Imap.Disconnect(); imapPassword.Text = ""; ImapState(); return; }
+            var address = imapAddress.Text.Trim();
+            var pass = imapPassword.Text.Replace(" ", "").Trim(); // Google shows app passwords in groups of four
+            if (!address.Contains('@') || pass.Length == 0 || imapServer.Text.Trim().Length == 0 || smtpServer.Text.Trim().Length == 0)
+            {
+                imapStatus.Text = "Fill in the address, app password and both servers first.";
+                return;
+            }
+            imapConnect.Enabled = false;
+            imapStatus.Text = "Checking…";
+            try
+            {
+                await Imap.Connect(address, pass, imapServer.Text, smtpServer.Text);
+                if (f.IsDisposed) return;
+                imapPassword.Text = "";
+                ImapState();
+            }
+            catch (Exception ex)
+            {
+                if (f.IsDisposed) return;
+                imapStatus.Text = ex is MailKit.Security.AuthenticationException
+                    ? "The address or app password was refused. Make sure it's an app password, not your normal one."
+                    : "Couldn't connect: " + ex.Message.Clip(120);
+            }
+            finally { if (!imapConnect.IsDisposed) imapConnect.Enabled = true; }
+        };
+
         // ---- chat panel ----
         Add(Heading("Chat panel"));
         grid.Controls[grid.Controls.Count - 1].Margin = new Padding(0, 22, 0, 8);
@@ -286,7 +378,11 @@ static class SettingsWindow
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
         var ok = new Button { Text = "Save", DialogResult = DialogResult.OK, AutoSize = true, Padding = new Padding(10, 2, 10, 2) };
         buttons.Controls.AddRange(new Control[] { cancel, ok });
-        Add(buttons);
+        buttons.Dock = DockStyle.Bottom;
+        buttons.Height = 52;
+        buttons.Padding = new Padding(14, 8, 30, 8);
+        f.Controls.Add(buttons);
+        scroller.BringToFront(); // so Fill takes what's left above the docked buttons
         f.AcceptButton = ok;
         f.CancelButton = cancel;
 
@@ -351,6 +447,12 @@ static class SettingsWindow
             catch (Exception ex) { status.Text = "Couldn't load: " + ex.Message.Clip(60); }
         };
 
+        // as tall as the settings need, but never taller than the screen
+        f.AutoSize = false;
+        var want = grid.GetPreferredSize(Size.Empty);
+        int maxH = Screen.FromPoint(Cursor.Position).WorkingArea.Height - 60;
+        f.ClientSize = new Size(want.Width + SystemInformation.VerticalScrollBarWidth + f.Padding.Horizontal,
+                                Math.Min(want.Height + buttons.Height + f.Padding.Vertical, maxH));
         if (f.ShowDialog() != DialogResult.OK) return;
         var chosen = P();
         Providers.Selected = chosen;

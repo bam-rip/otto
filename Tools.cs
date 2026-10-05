@@ -43,6 +43,7 @@ static class Tools
         foreach (var t in Memory.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         // email/calendar tools only exist once signed in, so they cost nothing otherwise
         if (Graph.SignedIn) foreach (var t in Graph.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+        else if (Imap.Connected) foreach (var t in Imap.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         return tools;
     }
 
@@ -92,7 +93,10 @@ static class Tools
 
     public static async Task<string> Run(string name, JsonNode input, Func<string, bool> confirm, CancellationToken ct)
     {
-        if (Graph.Handles(name)) return await Graph.Run(name, input, confirm, ct);
+        // Outlook wins when both are set up (it has the calendar too)
+        if (Graph.Handles(name) && Graph.SignedIn) return await Graph.Run(name, input, confirm, ct);
+        if (Imap.Handles(name) && Imap.Connected) return await Imap.Run(name, input, confirm, ct);
+        if (Graph.Handles(name)) return "Email isn't connected. The user can set it up in Otto's settings (gear icon).";
         switch (name)
         {
             case "web_search": return await Search(S(input, "query"), ct);
