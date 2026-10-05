@@ -27,8 +27,12 @@ static class Tools
 
     static HttpClient CreateHttp()
     {
-        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        // Search engines serve an empty or challenge page to clients that don't look like a browser,
+        // so send the headers a browser sends, not just a user agent.
+        var h = new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(30) };
         h.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36");
+        h.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        h.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
         return h;
     }
 
@@ -160,25 +164,117 @@ static class Tools
 
     // ---- web ----
 
+    internal record SearchResult(string Title, string Url, string Snippet);
+
+    /// DuckDuckGo's html endpoint now answers bots with a challenge page, so try several engines
+    /// and keep the first that gives real results.
     static async Task<string> Search(string query, CancellationToken ct)
     {
-        var html = await Http.GetStringAsync("https://html.duckduckgo.com/html/?q=" + Uri.EscapeDataString(query), ct);
-        var sb = new StringBuilder();
-        var links = Regex.Matches(html, "class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
-        var snippets = Regex.Matches(html, "class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
-        for (int i = 0; i < links.Count && i < 10; i++)
+        var q = Uri.EscapeDataString(query);
+        var engines = new (string Name, Func<Task<string>> Get, Func<string, List<SearchResult>> Parse)[]
         {
-            var href = WebUtility.HtmlDecode(links[i].Groups[1].Value);
-            var uddg = Regex.Match(href, "[?&]uddg=([^&]+)");
-            if (uddg.Success) href = Uri.UnescapeDataString(uddg.Groups[1].Value);
-            sb.AppendLine(Html.StripTags(links[i].Groups[2].Value));
-            sb.AppendLine(href);
-            if (i < snippets.Count) sb.AppendLine(Html.StripTags(snippets[i].Groups[1].Value));
+            ("DuckDuckGo", () => PostForm("https://lite.duckduckgo.com/lite/", "q=" + q, ct), ParseDdgLite),
+            ("Bing", () => Http.GetStringAsync($"https://www.bing.com/search?q={q}&setlang=en", ct), ParseBing),
+            ("DuckDuckGo html", () => Http.GetStringAsync("https://html.duckduckgo.com/html/?q=" + q, ct), ParseDdgHtml),
+        };
+        var errors = new List<string>();
+        foreach (var e in engines)
+        {
+            try
+            {
+                var html = await e.Get();
+                var results = e.Parse(html);
+                if (results.Count > 0) return FormatResults(results);
+                errors.Add(e.Name + ": no results");
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                errors.Add(e.Name + ": " + ex.Message);
+            }
+        }
+        return "No results (" + string.Join("; ", errors) + "). Try fewer or different words, or open " +
+               "https://www.bing.com/search?q=" + q + " in the browser.";
+    }
+
+    static async Task<string> PostForm(string url, string body, CancellationToken ct)
+    {
+        using var content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
+        using var res = await Http.PostAsync(url, content, ct);
+        res.EnsureSuccessStatusCode();
+        return await res.Content.ReadAsStringAsync(ct);
+    }
+
+    internal static string FormatResults(List<SearchResult> results)
+    {
+        var sb = new StringBuilder();
+        foreach (var r in results.Take(8))
+        {
+            sb.AppendLine(r.Title);
+            sb.AppendLine(r.Url);
+            if (r.Snippet.Length > 0) sb.AppendLine(r.Snippet.Clip(300));
             sb.AppendLine();
         }
-        if (sb.Length == 0 && html.Contains("anomaly", StringComparison.OrdinalIgnoreCase))
-            return "The search engine is rate-limiting right now. Search in the browser instead: open https://duckduckgo.com/?q=...";
-        return sb.Length > 0 ? sb.ToString() : "No results.";
+        return sb.ToString().TrimEnd();
+    }
+
+    internal static List<SearchResult> ParseDdgLite(string html)
+    {
+        var list = new List<SearchResult>();
+        var links = Regex.Matches(html, "<a[^>]*href=[\"']([^\"']+)[\"'][^>]*class=[\"']result-link[\"'][^>]*>(.*?)</a>", RegexOptions.Singleline);
+        var snippets = Regex.Matches(html, "class=[\"']result-snippet[\"'][^>]*>(.*?)</td>", RegexOptions.Singleline);
+        for (int i = 0; i < links.Count; i++)
+        {
+            var url = DdgUrl(WebUtility.HtmlDecode(links[i].Groups[1].Value));
+            if (url.Contains("duckduckgo.com/y.js")) continue; // ads
+            list.Add(new(Html.StripTags(links[i].Groups[2].Value), url, i < snippets.Count ? Html.StripTags(snippets[i].Groups[1].Value) : ""));
+        }
+        return list;
+    }
+
+    internal static List<SearchResult> ParseDdgHtml(string html)
+    {
+        var list = new List<SearchResult>();
+        var links = Regex.Matches(html, "class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
+        var snippets = Regex.Matches(html, "class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
+        for (int i = 0; i < links.Count; i++)
+            list.Add(new(Html.StripTags(links[i].Groups[2].Value), DdgUrl(WebUtility.HtmlDecode(links[i].Groups[1].Value)),
+                         i < snippets.Count ? Html.StripTags(snippets[i].Groups[1].Value) : ""));
+        return list;
+    }
+
+    static string DdgUrl(string href)
+    {
+        var uddg = Regex.Match(href, "[?&]uddg=([^&]+)");
+        if (uddg.Success) return Uri.UnescapeDataString(uddg.Groups[1].Value);
+        return href.StartsWith("//") ? "https:" + href : href;
+    }
+
+    internal static List<SearchResult> ParseBing(string html)
+    {
+        var list = new List<SearchResult>();
+        foreach (var block in html.Split("<li class=\"b_algo").Skip(1))
+        {
+            var a = Regex.Match(block, "<h2[^>]*>\\s*<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOptions.Singleline);
+            if (!a.Success) continue;
+            var p = Regex.Match(block, "<p[^>]*>(.*?)</p>", RegexOptions.Singleline);
+            list.Add(new(Html.StripTags(a.Groups[2].Value), BingUrl(WebUtility.HtmlDecode(a.Groups[1].Value)),
+                         p.Success ? Html.StripTags(p.Groups[1].Value) : ""));
+        }
+        return list;
+    }
+
+    /// Bing wraps results in bing.com/ck/a?...&u=a1<base64url of the real address>.
+    internal static string BingUrl(string href)
+    {
+        var u = Regex.Match(href, "[?&]u=a1([^&]+)");
+        if (!u.Success) return href;
+        try
+        {
+            var b = u.Groups[1].Value.Replace('-', '+').Replace('_', '/');
+            b = b.PadRight(b.Length + (4 - b.Length % 4) % 4, '=');
+            return Encoding.UTF8.GetString(Convert.FromBase64String(b));
+        }
+        catch { return href; }
     }
 
     static async Task<string> Fetch(string url, string? find, CancellationToken ct)

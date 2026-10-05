@@ -113,6 +113,16 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-transcript.txt"), outp);
             return;
         }
+        // Otto.exe --search "query" → what web_search returns (no AI cost), in %TEMP%\otto-search.txt
+        int se = Array.IndexOf(Environment.GetCommandLineArgs(), "--search");
+        if (se >= 0)
+        {
+            string outp;
+            try { outp = Tools.Run("web_search", new System.Text.Json.Nodes.JsonObject { ["query"] = Environment.GetCommandLineArgs()[se + 1] }, _ => false, CancellationToken.None).GetAwaiter().GetResult(); }
+            catch (Exception e) { outp = "ERROR " + e.Message; }
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-search.txt"), outp);
+            return;
+        }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
         if (Environment.GetCommandLineArgs().Contains("--update-test"))
         {
