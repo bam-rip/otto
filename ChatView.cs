@@ -38,9 +38,18 @@ sealed class ChatView : Control
         "Install VLC for me",
         "Close every window except this one",
     };
-    string[] suggestions = Pick();
+    (string label, string prompt, bool quick)[] suggestions = Pick();
 
-    static string[] Pick() => Pool.OrderBy(_ => Random.Shared.Next()).Take(4).ToArray();
+    /// The user's quick actions first (up to five), then random examples to make four.
+    static (string, string, bool)[] Pick()
+    {
+        var quick = QuickActions.All.Take(5).Select(a => (a.Name, a.Prompt, true));
+        var examples = Pool.OrderBy(_ => Random.Shared.Next()).Select(p => (p, p, false));
+        return quick.Concat(examples).Take(Math.Max(4, quick.Count())).ToArray();
+    }
+
+    /// Quick actions changed in settings: show them on the start screen right away.
+    public void RefreshSuggestions() { suggestions = Pick(); Invalidate(); }
     static readonly (string keys, string what)[] Hotkeys =
     {
         ("Ctrl+Shift+J", "open or hide Otto"),
@@ -50,7 +59,7 @@ sealed class ChatView : Control
 
     readonly ChatPanel owner;
     readonly List<Item> items = new();
-    readonly List<(Rectangle r, string text)> suggestionRects = new();
+    readonly List<(Rectangle r, string prompt)> suggestionRects = new();
     Font body = new("Segoe UI", 10.5f * Theme.TextScale);
     readonly Font small = new("Segoe UI", 8.5f);
     readonly Font smallBold = new("Segoe UI Semibold", 8.5f);
@@ -388,12 +397,13 @@ sealed class ChatView : Control
         TextRenderer.DrawText(g, intro, body, new Rectangle(G, y, Inner, introSize.Height), ChatPanel.Dim, flow);
         y += introSize.Height + D(20);
 
-        foreach (var s in suggestions)
+        foreach (var (label, prompt, quick) in suggestions)
         {
             var r = new Rectangle(G, y, Inner, D(44));
-            suggestionRects.Add((r, s));
+            suggestionRects.Add((r, prompt));
             using (var b = new SolidBrush(Theme.Over(r.Contains(mouse) ? 52 : 30))) g.FillRectangle(b, r);
-            TextRenderer.DrawText(g, s, body, new Rectangle(r.X + D(14), r.Y, r.Width - D(48), r.Height), ChatPanel.Fg,
+            if (quick) using (var bar = new SolidBrush(ChatPanel.Accent)) g.FillRectangle(bar, r.X, r.Y, D(3), r.Height); // your own quick actions
+            TextRenderer.DrawText(g, label, body, new Rectangle(r.X + D(14), r.Y, r.Width - D(48), r.Height), ChatPanel.Fg,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, "", glyph, new Rectangle(r.Right - D(34), r.Y, D(20), r.Height), ChatPanel.Dim,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);

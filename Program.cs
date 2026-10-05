@@ -410,6 +410,7 @@ sealed class TrayApp : ApplicationContext
             notifiedChat = null;
             panel.ShowPanel();
         };
+        QuickActions.Changed += panel.RefreshSuggestions;
         scheduleTimer.Tick += (_, _) => RunDue();
         scheduleTimer.Start();
         panel.BeginInvoke(RunDue); // anything that came due while Otto was off
@@ -446,6 +447,19 @@ sealed class TrayApp : ApplicationContext
         var m = new ContextMenuStrip();
         m.Items.Add("Open", null, (_, _) => panel.ShowPanel());
         m.Items.Add("Settings (AI provider, key)…", null, (_, _) => SettingsWindow.Show());
+        var quick = new ToolStripMenuItem("Quick actions");
+        quick.DropDownItems.Add("(none yet)"); // filled each time it opens
+        quick.DropDownOpening += (_, _) =>
+        {
+            quick.DropDownItems.Clear();
+            foreach (var a in QuickActions.All)
+            {
+                var prompt = a.Prompt;
+                quick.DropDownItems.Add(a.Name, null, (_, _) => { panel.ShowPanel(); Run(prompt); });
+            }
+            if (quick.DropDownItems.Count == 0) quick.DropDownItems.Add(new ToolStripMenuItem("None yet: add them in Settings") { Enabled = false });
+        };
+        m.Items.Add(quick);
         m.Items.Add("Reminders and scheduled tasks…", null, (_, _) => ScheduleWindow.Show());
         m.Items.Add("Welcome tour", null, (_, _) => ShowWelcome());
         var startup = new ToolStripMenuItem("Start with Windows") { Checked = StartsWithWindows() };

@@ -509,6 +509,8 @@ sealed class ChatPanel : Form
     }
     public void AddTool(string t) => Ui(() => chat.AddNote(t, tool: true));
     public void AddSystem(string t) => Ui(() => chat.AddNote(t, tool: false));
+    public void RefreshSuggestions() => Ui(chat.RefreshSuggestions);
+
     public void ClearLog() => Ui(chat.Clear);
     public void SetCost(string text) => Ui(() => { costText = text; Invalidate(); });
 

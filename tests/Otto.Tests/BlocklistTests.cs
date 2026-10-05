@@ -40,3 +40,29 @@ public class BlocklistTests : IDisposable
         Assert.StartsWith("Blocked", fetch);
     }
 }
+
+[Collection("Data folder")]
+public class QuickActionTests : IDisposable
+{
+    readonly string dir = Path.Combine(Path.GetTempPath(), "otto-quick-" + Guid.NewGuid().ToString("N"));
+    readonly string old = Paths.Data;
+    public QuickActionTests() { Directory.CreateDirectory(dir); Paths.Data = dir; }
+    public void Dispose() { Paths.Data = old; Directory.Delete(dir, true); }
+
+    [Fact]
+    public void Saved_quick_actions_come_back_and_blank_ones_are_dropped()
+    {
+        Assert.Empty(QuickActions.All);
+        bool changed = false;
+        void Note() => changed = true;
+        QuickActions.Changed += Note;
+        try
+        {
+            QuickActions.All = new() { new("Morning briefing", " Summarise my unread email and today's calendar "), new("", "no name"), new("No prompt", "  ") };
+            var a = Assert.Single(QuickActions.All);
+            Assert.Equal("Summarise my unread email and today's calendar", a.Prompt);
+            Assert.True(changed);
+        }
+        finally { QuickActions.Changed -= Note; }
+    }
+}
