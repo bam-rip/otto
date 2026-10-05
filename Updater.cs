@@ -251,7 +251,9 @@ static class Updater
     }
 
     /// True for the published single-file build: its code isn't in a separate Otto.dll on disk.
+#pragma warning disable IL3000 // an empty Location is exactly the single-file signal we want
     static bool IsSingleFile => string.IsNullOrEmpty(typeof(Updater).Assembly.Location);
+#pragma warning restore IL3000
 
     /// First thing after an update: remove the previous exe (we couldn't delete it while it was running).
     public static void CleanUpAfterUpdate()
