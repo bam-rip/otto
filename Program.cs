@@ -11,6 +11,9 @@ static class Program
     [STAThread]
     static void Main()
     {
+        // every pattern match gets a time limit: Otto runs them on web pages and emails written by strangers, and one
+        // crafted to make a pattern backtrack shouldn't be able to freeze a task
+        AppContext.SetData("REGEX_DEFAULT_MATCH_TIMEOUT", TimeSpan.FromSeconds(5));
         // developers: OTTO_DATA points Otto at a separate data folder (sample chats, reminders...) instead of the real one
         if (CommandLine.Dev && Environment.GetEnvironmentVariable("OTTO_DATA") is { Length: > 0 } data) Paths.Data = data;
         Migration.FromJarvis(); // used to be called Jarvis; carry its data over once

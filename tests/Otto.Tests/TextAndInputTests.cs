@@ -127,3 +127,31 @@ public class TextAndInputTests
             filled[0]!["input"]!["steps"]![0]!["text"]!.GetValue<string>());
     }
 }
+
+public class HtmlStripTests
+{
+    static readonly System.Text.RegularExpressions.Regex Old =
+        new(@"<(script|style|noscript|svg|head)[^>]*>.*?</\1>", System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    [Fact]
+    public void Same_result_as_the_old_pattern_on_random_pages()
+    {
+        var rng = new Random(1234);
+        string[] parts = { "<script>", "</script>", "<SCRIPT src=x>", "</Script>", "<style>", "</style>", "<svg>", "</svg>",
+                           "<head>", "</head>", "<header>", "<noscript>", "</noscript>", "<p>", "</p>", "text ", "<", ">", "<scr", "</scrip", "<svg", " x=1>" };
+        for (int n = 0; n < 5000; n++)
+        {
+            var page = string.Concat(Enumerable.Range(0, rng.Next(0, 30)).Select(_ => parts[rng.Next(parts.Length)]));
+            Assert.Equal(Old.Replace(page, " "), Html.DropHiddenBlocks(page));
+        }
+    }
+
+    [Fact]
+    public void A_page_of_unclosed_tags_is_quick()
+    {
+        var hostile = string.Concat(Enumerable.Repeat("<script>x", 300_000)); // ~2.7 MB, under the 3 MB page limit
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Html.ToText(hostile);
+        Assert.True(sw.ElapsedMilliseconds < 2000, $"took {sw.ElapsedMilliseconds} ms");
+    }
+}

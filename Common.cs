@@ -55,13 +55,40 @@ static class Html
     /// run of blank lines becomes one line break (web pages, where 'find' works line by line).
     public static string ToText(string html, bool paragraphs = false)
     {
-        html = Regex.Replace(html, "<(script|style|noscript|svg|head)[^>]*>.*?</\\1>", " ", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        html = DropHiddenBlocks(html);
         html = Regex.Replace(html, "<(br|/p|/div|/li|/h[1-6]|/tr)[^>]*>", "\n", RegexOptions.IgnoreCase);
         var text = StripTags(html);
         text = Regex.Replace(text, "[ \t\u00a0]+", " "); // &nbsp; decodes to \u00a0
         return paragraphs
             ? Regex.Replace(text, "\\s*\n\\s*(\n\\s*)+", "\n\n").Trim()
             : Regex.Replace(text, "\\s*\n\\s*", "\n").Trim();
+    }
+
+    static readonly string[] Hidden = { "script", "style", "noscript", "svg", "head" };
+
+    /// Removes &lt;script&gt;...&lt;/script&gt; (and style, noscript, svg, head) blocks, replacing each with a space. Same
+    /// result as the regex <c>&lt;(script|style|noscript|svg|head)[^&gt;]*&gt;.*?&lt;/\1&gt;</c> (case-insensitive), but in one
+    /// pass: that regex re-scans to the end of the page for every opening tag that never closes, so a hostile page
+    /// of unclosed tags took minutes. Here a tag type that never closes is noted once and skipped after that.
+    internal static string DropHiddenBlocks(string html)
+    {
+        var lower = html.ToLowerInvariant(); // same length as html, for case-insensitive searching
+        var neverCloses = new HashSet<string>();
+        var sb = new System.Text.StringBuilder(html.Length);
+        int pos = 0, scan = 0;
+        while (true)
+        {
+            int open = lower.IndexOf('<', scan);
+            if (open < 0) break;
+            string? tag = Hidden.FirstOrDefault(t => string.CompareOrdinal(lower, open + 1, t, 0, t.Length) == 0 && !neverCloses.Contains(t));
+            int openEnd = tag == null ? -1 : lower.IndexOf('>', open + 1 + tag.Length);
+            if (tag == null || openEnd < 0) { scan = open + 1; continue; }
+            int close = lower.IndexOf("</" + tag + ">", openEnd + 1, StringComparison.Ordinal);
+            if (close < 0) { neverCloses.Add(tag); scan = open + 1; continue; } // no closing tag from here on, so never again
+            sb.Append(html, pos, open - pos).Append(' ');
+            pos = scan = close + tag.Length + 3;
+        }
+        return sb.Append(html, pos, html.Length - pos).ToString();
     }
 
     public static string StripTags(string s) => WebUtility.HtmlDecode(Regex.Replace(s, "<[^>]+>", "")).Trim();

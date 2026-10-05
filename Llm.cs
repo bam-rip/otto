@@ -415,6 +415,7 @@ static class Llm
     /// Model list for the settings window: GET {base}/models works on every provider here.
     public static async Task<List<string>> ListModelsAsync(Provider p, string baseUrl, string? key)
     {
+        if (Providers.KeyInTheClear(baseUrl, key) is string clear) throw new InvalidOperationException(clear);
         using var req = new HttpRequestMessage(HttpMethod.Get, baseUrl + "/models");
         if (p.IsAnthropic) AnthropicHeaders(req, key ?? throw new InvalidOperationException("paste a key first"));
         else if (!string.IsNullOrWhiteSpace(key)) req.Headers.Add("Authorization", "Bearer " + key);

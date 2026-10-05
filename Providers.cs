@@ -59,14 +59,19 @@ static class Providers
             p.SavedKey());
     }
 
+    /// A key sent over plain http to another machine can be read by anyone on the network path. Returns why it
+    /// mustn't be sent, or null when it's fine (https, a server on this PC, or no key).
+    public static string? KeyInTheClear(string baseUrl, string? key) =>
+        !string.IsNullOrWhiteSpace(key) && Uri.TryCreate(baseUrl, UriKind.Absolute, out var u) && u.Scheme == "http" && !u.IsLoopback
+            ? $"The server address {baseUrl} isn't encrypted (http), so your API key would travel in the clear. Use an https address, or a server on this PC."
+            : null;
+
     /// Ready to send a request? Returns what's missing, or null.
     public static string? Problem(AiConfig c)
     {
         if (c.Provider.NeedsKey && string.IsNullOrWhiteSpace(c.Key)) return $"No API key for {c.Provider.Label} yet. Open settings (the gear icon) to add one.";
         if (string.IsNullOrWhiteSpace(c.Fast)) return "No model chosen yet. Open settings (the gear icon) and pick one.";
-        // a key sent over plain http to another machine can be read by anyone on the network path
-        if (!string.IsNullOrWhiteSpace(c.Key) && Uri.TryCreate(c.BaseUrl, UriKind.Absolute, out var u) && u.Scheme == "http" && !u.IsLoopback)
-            return $"The server address {c.BaseUrl} isn't encrypted (http), so your API key would travel in the clear. Use an https address, or a server on this PC.";
+        if (KeyInTheClear(c.BaseUrl, c.Key) is string clear) return clear;
         return null;
     }
 }
