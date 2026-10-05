@@ -15,17 +15,25 @@ if ((Plain $a).Length -lt 12) { throw 'Use at least 12 characters. Nothing was c
 
 Write-Host 'Building...'
 dotnet build "$src\Otto.csproj" -c Release --nologo -v quiet
-$exe = Get-ChildItem "$src\bin\Release" -Recurse -Filter Otto.exe | Select-Object -First 1
+if ($LASTEXITCODE -ne 0) { throw 'Build failed. Nothing was changed.' }
+# the exact build just made (older builds in other folders don't know --protect-signing-key)
+$tfm = ([xml](Get-Content "$src\Otto.csproj")).Project.PropertyGroup.TargetFramework | Where-Object { $_ } | Select-Object -First 1
+$exe = Join-Path $src "bin\Release\$tfm\Otto.exe"
+if (-not (Test-Path $exe)) { throw "Couldn't find the build at $exe. Nothing was changed." }
+$resultFile = "$env:TEMP\otto-protect-key.txt"
+Remove-Item $resultFile -ErrorAction SilentlyContinue # never read an old result
 $env:OTTO_DEV = '1'
 $env:OTTO_SIGNING_PASSPHRASE = Plain $a
-try { Start-Process $exe.FullName -ArgumentList '--protect-signing-key' -Wait }
+try { Start-Process $exe -ArgumentList '--protect-signing-key' -Wait }
 finally { Remove-Item Env:\OTTO_DEV, Env:\OTTO_SIGNING_PASSPHRASE -ErrorAction SilentlyContinue }
 
-$result = Get-Content "$env:TEMP\otto-protect-key.txt" -ErrorAction SilentlyContinue
+$result = Get-Content $resultFile -ErrorAction SilentlyContinue
 if ($result -ne 'protected') { throw "Didn't work: $result" }
+# trust the file itself, not the message
+if ((Get-Content $key -Raw) -notmatch 'BEGIN ENCRYPTED PRIVATE KEY') { throw "The key file still isn't locked." }
 Write-Host ''
 Write-Host "Done. $key is now locked with your passphrase."
 Write-Host 'Next:'
-Write-Host '  1. Save the passphrase in your password manager.'
-Write-Host '  2. Copy the locked key file to a backup off this PC (USB stick, or attach it in your password manager).'
-Write-Host '  3. Delete any unlocked copies, e.g. the one in Downloads.'
+Write-Host '  1. Keep the passphrase somewhere safe, apart from your key backup.'
+Write-Host '  2. Copy the locked key file to your backup (USB stick), replacing any older copy there.'
+Write-Host '  3. Delete any unlocked copies.'
