@@ -9,6 +9,10 @@ static class Win32
 {
     public static IntPtr Foreground() => GetForegroundWindow();
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+
     /// Lower-case process name that owns the window ("chrome", "otto"), or "" if it's gone.
     public static string ProcessName(IntPtr h)
     {

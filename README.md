@@ -53,6 +53,7 @@ You need Windows 10 (version 2004 or later) or 11, and the [.NET 8 SDK](https://
 |---|---|
 | Ctrl+Shift+J | Open or hide the panel |
 | Ctrl+Alt+J | Push-to-talk: press, speak, press again |
+| Ctrl+Alt+A | Ask about this: what you've selected in any app (or a picture of the window) goes into the panel |
 | Ctrl+Alt+End | **Stop everything immediately** |
 
 The gear icon opens the settings: AI provider and key, models, email sign-in, reply animation and read-aloud.

@@ -185,6 +185,18 @@ static class Program
             File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-task-test.txt"), log.ToString());
             return;
         }
+        // Otto.exe --ask-test → what Ctrl+Alt+A grabs from testssk-test-window.ps1, in %TEMP%\otto-ask-test.txt
+        if (Dev && Environment.GetCommandLineArgs().Contains("--ask-test"))
+        {
+            ApplicationConfiguration.Initialize();
+            for (int i = 0; i < 50 && Win32.Title(Win32.Foreground()) != "Otto ask test"; i++) Thread.Sleep(200);
+            string before = Clipboard.ContainsText() ? Clipboard.GetText() : "(no text)";
+            var c = AskAbout.Grab();
+            string after = Clipboard.ContainsText() ? Clipboard.GetText() : "(no text)";
+            File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-ask-test.txt"),
+                $"window: {c.Window}\ntext: {c.Text ?? "(none)"}\npicture: {(c.Picture != null ? c.Picture.Name : "(none)")}\nclipboard kept: {before == after}");
+            return;
+        }
         // Otto.exe --update-test → check GitHub and install a newer release over this exe, log in %TEMP%\otto-update.txt
         if (Dev && Environment.GetCommandLineArgs().Contains("--update-test"))
         {
@@ -257,7 +269,7 @@ static class Program
 /// Owns everything: tray icon, the slide-out panel, global hotkeys, the agent and the mic.
 sealed class TrayApp : ApplicationContext
 {
-    const int KeyPanel = 1, KeyTalk = 2, KeyKill = 3;
+    const int KeyPanel = 1, KeyTalk = 2, KeyKill = 3, KeyAsk = 4;
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     readonly NotifyIcon tray;
@@ -420,11 +432,13 @@ sealed class TrayApp : ApplicationContext
         if (!keys.Register(KeyPanel, Hotkeys.Ctrl | Hotkeys.Shift, Keys.J)) failed.Add("Ctrl+Shift+J");
         if (!keys.Register(KeyTalk, Hotkeys.Ctrl | Hotkeys.Alt, Keys.J)) failed.Add("Ctrl+Alt+J");
         if (!keys.Register(KeyKill, Hotkeys.Ctrl | Hotkeys.Alt, Keys.End)) failed.Add("Ctrl+Alt+End");
+        if (!keys.Register(KeyAsk, Hotkeys.Ctrl | Hotkeys.Alt, Keys.A)) failed.Add("Ctrl+Alt+A");
         keys.Pressed += id =>
         {
             if (id == KeyPanel) panel.Toggle();
             else if (id == KeyTalk) ToggleMic();
             else if (id == KeyKill) Kill();
+            else if (id == KeyAsk) AskAboutThis();
         };
 
         if (failed.Count > 0) panel.AddSystem("Another app already owns: " + string.Join(", ", failed));
@@ -724,6 +738,17 @@ sealed class TrayApp : ApplicationContext
         notifiedChat = chatId;
         Sfx.Attention();
         tray.ShowBalloonTip(15_000, title, text.Clip(250), ToolTipIcon.None);
+    }
+
+    /// Ctrl+Alt+A: the selection (or a picture of the window) from the app in front goes into the panel.
+    void AskAboutThis()
+    {
+        if (panel.ContainsFocus) return; // pressed in Otto itself: nothing to grab
+        var c = AskAbout.Grab();
+        panel.ShowPanel();
+        if (c.Text != null) panel.SetInput($"About this, from {c.Window.Clip(40)}:\r\n\"{c.Text}\"\r\n\r\n");
+        else if (c.Picture != null) { panel.AddAttachment(c.Picture); panel.SetInput(""); }
+        else panel.AddSystem("Nothing to grab from that window.");
     }
 
     void ShowWelcome() => Welcome.Show(SettingsWindow.Show, StartsWithWindows, SetStartWithWindows);

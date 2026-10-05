@@ -65,9 +65,10 @@ static class Welcome
             () =>
             {
                 var s = Stack();
-                s.Controls.Add(Title("Three keys to remember"));
+                s.Controls.Add(Title("Keys to remember"));
                 s.Controls.Add(Row("Ctrl + Shift + J", "Open or hide me"));
                 s.Controls.Add(Row("Ctrl + Alt + J", "Talk instead of typing: press, speak, press again"));
+                s.Controls.Add(Row("Ctrl + Alt + A", "Ask me about whatever you've selected, in any app"));
                 s.Controls.Add(Row("Ctrl + Alt + End", "Stop everything I'm doing, straight away"));
                 return s;
             },

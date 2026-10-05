@@ -136,7 +136,7 @@ static partial class Desktop
     }
 
     /// "ctrl+shift+s" → hold modifiers, tap the last key, release in reverse.
-    static void PressCombo(string combo)
+    internal static void PressCombo(string combo)
     {
         var keys = combo.Split('+', StringSplitOptions.RemoveEmptyEntries).Select(Parse).ToList();
         if (combo.EndsWith("++")) keys.Add(Keys.Oemplus);

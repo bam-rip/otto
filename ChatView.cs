@@ -54,6 +54,7 @@ sealed class ChatView : Control
     {
         ("Ctrl+Shift+J", "open or hide Otto"),
         ("Ctrl+Alt+J", "talk"),
+        ("Ctrl+Alt+A", "ask about what's selected"),
         ("Ctrl+Alt+End", "stop everything"),
     };
 
