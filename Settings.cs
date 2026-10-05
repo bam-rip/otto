@@ -46,7 +46,7 @@ static class SettingsWindow
         log.AppendLine($"AI scrolled to {f.ContentScroll}");
         f.OpenSection(Mail);
         Settle();
-        log.AppendLine($"after opening Email: page top {f.PageTop} (expect {f.LogicalToDeviceUnits(26)}), scroll {f.ContentScroll}");
+        log.AppendLine($"after opening Email: page top {f.PageTop} (expect 26: pages start at the top), scroll {f.ContentScroll}");
         Shot("mail");
         try
         {
