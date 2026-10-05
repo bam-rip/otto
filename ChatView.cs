@@ -171,6 +171,8 @@ sealed class ChatView : Control
     protected override void OnResize(EventArgs e) { base.OnResize(e); dirty = true; }
 
     const int PadX = 12, PadY = 9;
+    /// Room kept under every message for its hover buttons, so showing them never moves anything.
+    const int ActionRow = 26;
 
     void LayoutItems(Graphics g)
     {
@@ -179,7 +181,8 @@ sealed class ChatView : Control
         foreach (var it in items)
         {
             // more air between turns than between a turn and its tool notes
-            y += prev == null ? 0 : it is Note && prev is not Msg { User: true } ? D(4) : D(12);
+            // (a message's action row already leaves some room under it)
+            y += prev == null ? 0 : prev is Msg ? D(2) : it is Note ? D(4) : D(12);
             switch (it)
             {
                 case Msg m:
@@ -208,7 +211,7 @@ sealed class ChatView : Control
                     break;
                 }
             }
-            y = it.Box.Bottom;
+            y = it.Box.Bottom + (it is Msg ? D(ActionRow) : 0);
             prev = it;
         }
         if (showTyping)
@@ -427,8 +430,8 @@ sealed class ChatView : Control
 
     protected override void OnMouseLeave(EventArgs e) { mouse = new Point(-1, -1); Invalidate(); }
 
-    /// Copy on every message; Retry on Otto's last reply; Edit on your last message. They sit beside the
-    /// bubble's bottom edge (in the empty side of the row), so showing them never moves anything.
+    /// Copy on every message; Retry and Undo on Otto's last reply; Edit on your last message. They sit in the
+    /// row under the bubble, lined up with its outer edge, so they stay on screen however wide the bubble is.
     void DrawActions(Graphics g)
     {
         actionRects.Clear();
@@ -439,8 +442,8 @@ sealed class ChatView : Control
         for (int i = 0; i < items.Count; i++)
         {
             if (items[i] is not Msg m) continue;
-            // hover zone: the bubble's whole row, so moving toward the buttons doesn't hide them
-            var row = new Rectangle(G, m.Box.Top, Inner, m.Box.Height);
+            // hover zone: the bubble's whole row plus the buttons under it, so moving to them doesn't hide them
+            var row = new Rectangle(G, m.Box.Top, Inner, m.Box.Height + D(ActionRow));
             if (!row.Contains(p)) continue;
 
             var acts = new List<(string glyph, Action act, string tip)> { (GlyphCopy, () => Clipboard.SetText(m.Text), "Copy") };
@@ -448,9 +451,9 @@ sealed class ChatView : Control
             if (!Busy && !m.User && i == lastOtto && LastTurnActed()) acts.Add((GlyphUndo, () => UndoRequested?.Invoke(), "Undo what Otto just did"));
             if (!Busy && m.User && i == lastUser) acts.Add((GlyphEdit, () => EditRequested?.Invoke(), "Edit and resend"));
 
-            int size = D(26), gap = D(2);
-            int x = m.User ? m.Box.Left - D(6) - acts.Count * (size + gap) : m.Box.Right + D(6);
-            int y = m.Box.Bottom - size;
+            int size = D(ActionRow - 2), gap = D(2);
+            int x = m.User ? m.Box.Right - acts.Count * size - (acts.Count - 1) * gap : m.Box.Left;
+            int y = m.Box.Bottom + D(2);
             foreach (var (glyph, act, tip) in acts)
             {
                 var r = new Rectangle(x, y, size, size);

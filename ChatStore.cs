@@ -10,7 +10,7 @@ static class ChatStore
     const int Keep = 100; // oldest chats beyond this are removed
     static string Dir => Path.Combine(Paths.Data, "chats");
 
-    public sealed record Summary(string Id, string Title, DateTime When);
+    public sealed record Summary(string Id, string Title, string Preview, DateTime When);
 
     public static string NewId() => DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
 
@@ -25,6 +25,7 @@ static class ChatStore
             var doc = new JsonObject
             {
                 ["title"] = Title(copy),
+                ["preview"] = Preview(copy),
                 ["saved"] = DateTime.Now.ToString("o"),
                 ["messages"] = copy,
             };
@@ -45,6 +46,7 @@ static class ChatStore
             {
                 var j = JsonNode.Parse(File.ReadAllText(f.FullName))!;
                 list.Add(new Summary(Path.GetFileNameWithoutExtension(f.Name), j["title"]?.ToString() ?? "(chat)",
+                    j["preview"]?.ToString() ?? "",
                     DateTime.TryParse(j["saved"]?.ToString(), out var d) ? d : f.LastWriteTime));
             }
             catch { }
@@ -74,6 +76,24 @@ static class ChatStore
             }
         }
         return "(chat)";
+    }
+
+    /// Otto's last words in the chat, for the second line in the history list.
+    internal static string Preview(JsonArray messages)
+    {
+        for (int i = messages.Count - 1; i >= 0; i--)
+        {
+            if (messages[i]?["role"]?.GetValue<string>() != "assistant") continue;
+            var text = messages[i]!["content"] switch
+            {
+                JsonValue v => v.ToString(),
+                JsonArray blocks => string.Join(" ", blocks.Where(b => b?["type"]?.GetValue<string>() == "text").Select(b => b!["text"]?.ToString())),
+                _ => "",
+            };
+            text = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            if (text.Length > 0) return text.Clip(120);
+        }
+        return "";
     }
 
     static void StripImages(JsonArray messages)

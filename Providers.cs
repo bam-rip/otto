@@ -182,7 +182,7 @@ static class SettingsWindow
 
         Add(Caption("API key in use (keys are stored in Windows Credential Manager)"));
         var keyRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
-        var keys = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = W - 250 };
+        var keys = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = W - 290 };
         var addKey = new Button { Text = "Add key…", AutoSize = true, Padding = new Padding(6, 0, 6, 0), Margin = new Padding(8, 0, 0, 0) };
         var removeKey = new Button { Text = "Remove", AutoSize = true, Padding = new Padding(6, 0, 6, 0), Margin = new Padding(6, 0, 0, 0) };
         var getKey = new LinkLabel { Text = "Get a key", AutoSize = true, Margin = new Padding(10, 6, 0, 0) };

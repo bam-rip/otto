@@ -144,6 +144,14 @@ static class Program
             SettingsWindow.Show();
             return;
         }
+        // Otto.exe --render-ui → the chat (hovering a wide bubble) and the history list drawn offscreen,
+        // as %TEMP%\otto-ui-chat.png and otto-ui-history.png, for checking layout without the real panel
+        if (Environment.GetCommandLineArgs().Contains("--render-ui"))
+        {
+            ApplicationConfiguration.Initialize();
+            RenderUi.Run();
+            return;
+        }
         using var mutex = new Mutex(true, "Otto.SingleInstance", out bool first);
         bool updated = Environment.GetCommandLineArgs().Contains("--updated");
         // right after an update the previous copy is still closing: wait for it instead of quitting
@@ -237,6 +245,13 @@ sealed class TrayApp : ApplicationContext
             ResetCounter();
         };
         panel.HistoryRequested += ShowHistory;
+        panel.History.OpenRequested += id => { OpenChat(id); panel.HideHistory(); };
+        panel.History.DeleteRequested += id => { ChatStore.Delete(id); panel.History.Remove(id); };
+        panel.History.DeleteAllRequested += () =>
+        {
+            ChatStore.DeleteAll();
+            panel.ShowHistory(new List<ChatStore.Summary>(), chatId);
+        };
         panel.UpdateClicked += () => InstallUpdate();
         panel.UpdateNotesClicked += () => { if (pendingUpdate != null) Tools.OpenUrl(pendingUpdate.PageUrl); };
         panel.UpdateDismissed += () =>
@@ -398,27 +413,8 @@ sealed class TrayApp : ApplicationContext
 
     void ShowHistory()
     {
-        var menu = new ContextMenuStrip { ShowImageMargin = false };
-        var chats = ChatStore.List().Where(c => c.Id != chatId).Take(20).ToList();
-        if (chats.Count == 0) menu.Items.Add(new ToolStripMenuItem("No saved chats yet") { Enabled = false });
-        foreach (var c in chats)
-        {
-            var when = c.When.Date == DateTime.Today ? c.When.ToString("h:mm tt")
-                     : c.When.Date == DateTime.Today.AddDays(-1) ? "Yesterday"
-                     : c.When.ToString("d MMM");
-            var id = c.Id;
-            menu.Items.Add($"{c.Title}    ({when})", null, (_, _) => OpenChat(id));
-        }
-        if (chats.Count > 0)
-        {
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Delete all saved chats", null, (_, _) =>
-            {
-                if (MessageBox.Show("Delete every saved chat? This can't be undone.", "Otto", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
-                    ChatStore.DeleteAll();
-            });
-        }
-        menu.Show(Cursor.Position);
+        if (agent.Snapshot().Count > 0) ChatStore.Save(chatId, agent.Snapshot()); // so the open chat shows, up to date
+        panel.ShowHistory(ChatStore.List(), chatId);
     }
 
     void ShowUpdate(Updater.Release? r)

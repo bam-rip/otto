@@ -21,6 +21,7 @@ sealed class ChatPanel : Form
     const int BaseWidth = 400;
 
     readonly ChatView chat;
+    readonly HistoryView history;
     readonly CueTextBox input = new();
     readonly System.Windows.Forms.Timer anim = new() { Interval = 15 };
     readonly Font titleFont = new("Segoe UI Light", 18f);
@@ -89,6 +90,9 @@ sealed class ChatPanel : Form
             };
         }
         Controls.Add(chat);
+        history = new HistoryView(this) { Visible = false };
+        history.CloseRequested += HideHistory;
+        Controls.Add(history);
 
         input.Multiline = true;
         input.AcceptsReturn = true;
@@ -164,6 +168,7 @@ sealed class ChatPanel : Form
         else rUpdateBar = rUpdateGo = rUpdateNotes = rUpdateClose = Rectangle.Empty;
         int chatBottom = (attachments.Count > 0 ? rAttach.Top : rBox.Top) - D(12);
         chat.SetBounds(0, chatTop, w, chatBottom - chatTop);
+        history.SetBounds(0, chatTop, w, chatBottom - chatTop);
         Invalidate();
     }
 
@@ -353,10 +358,10 @@ sealed class ChatPanel : Form
         if (rUpdateGo.Contains(e.Location)) UpdateClicked?.Invoke();
         else if (rUpdateNotes.Contains(e.Location)) UpdateNotesClicked?.Invoke();
         else if (rUpdateClose.Contains(e.Location)) UpdateDismissed?.Invoke();
-        else if (rHistory.Contains(e.Location)) HistoryRequested?.Invoke();
+        else if (rHistory.Contains(e.Location)) { if (history.Visible) HideHistory(); else HistoryRequested?.Invoke(); }
         else if (rPin.Contains(e.Location)) { Pinned = !Pinned; Invalidate(); }
         else if (rAttach.Contains(e.Location)) { attachments.Clear(); Relayout(); }
-        else if (rNew.Contains(e.Location)) ClearRequested?.Invoke();
+        else if (rNew.Contains(e.Location)) { if (history.Visible) HideHistory(); ClearRequested?.Invoke(); }
         else if (rSettings.Contains(e.Location)) SettingsRequested?.Invoke();
         else if (rHide.Contains(e.Location)) HidePanel();
         else if (rMic.Contains(e.Location)) MicToggled?.Invoke();
@@ -366,12 +371,28 @@ sealed class ChatPanel : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
-        if (keyData == Keys.Escape) { HidePanel(); return true; }
+        if (keyData == Keys.Escape) { if (history.Visible) HideHistory(); else HidePanel(); return true; }
         return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    /// The saved-chats list, in place of the conversation until a chat is picked or Back is pressed.
+    public HistoryView History => history;
+    public void ShowHistory(List<ChatStore.Summary> chats, string currentId)
+    {
+        history.Show(chats, currentId);
+        history.BringToFront();
+        chat.Visible = false;
+    }
+    public void HideHistory()
+    {
+        history.Visible = false;
+        chat.Visible = true;
+        input.Focus();
     }
 
     void SendInput()
     {
+        if (history.Visible) HideHistory();
         var text = input.Text.Trim();
         if (busy || text.Length == 0 && attachments.Count == 0) return;
         if (text.Length == 0) text = "Have a look at this.";
