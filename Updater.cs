@@ -101,24 +101,58 @@ static class Updater
             asset["url"]!.GetValue<string>(), asset["name"]!.GetValue<string>(), sig["url"]!.GetValue<string>());
     }
 
-    /// Downloads the release, puts the new Otto.exe in place of this one, and starts it. The caller then quits.
-    /// The running exe can't be overwritten but can be renamed, so: rename ours to Otto.old.exe, move the new
-    /// one in, start it; it deletes Otto.old.exe once we've gone.
-    public static async Task InstallAsync(Release r, IProgress<string>? progress = null, Action? swapped = null)
+    /// Where a downloaded update waits until the user clicks Update.
+    static string Staging(Release r) => Path.Combine(Paths.Data, "updates", r.Tag);
+
+    /// Downloads and checks a release in the background as soon as it's found, so clicking Update only has to
+    /// swap files and restart. Safe to call again: a finished download is reused.
+    public static async Task PrepareAsync(Release r, IProgress<string>? progress = null)
     {
-        var exe = Environment.ProcessPath ?? throw new InvalidOperationException("Can't tell where Otto is installed.");
-        var dir = Path.GetDirectoryName(exe)!;
-        var work = Path.Combine(Path.GetTempPath(), "otto-update-" + r.Tag);
-        Directory.CreateDirectory(work);
-        var zip = Path.Combine(work, r.ZipName);
+        var dir = Staging(r);
+        var zip = Path.Combine(dir, r.ZipName);
+        if (File.Exists(zip) && File.Exists(zip + ".sig") && VerifyFile(zip)) return;
+        // only ever keep one waiting update
+        var updates = Path.GetDirectoryName(dir)!;
+        if (Directory.Exists(updates)) try { Directory.Delete(updates, true); } catch { }
+        Directory.CreateDirectory(dir);
 
         progress?.Report("Downloading…");
         var data = await Download(r.ZipUrl, 300_000_000);
         var sig = await Download(r.SigUrl, 10_000);
-        progress?.Report("Checking…");
         if (!Verify(data, Convert.FromBase64String(System.Text.Encoding.ASCII.GetString(sig).Trim())))
             throw new InvalidOperationException("The download isn't signed by Otto's release key, so it wasn't installed. Nothing on your PC was changed.");
+        await File.WriteAllBytesAsync(zip + ".sig", sig);
         await File.WriteAllBytesAsync(zip, data);
+    }
+
+    public static bool IsPrepared(Release r)
+    {
+        var zip = Path.Combine(Staging(r), r.ZipName);
+        return File.Exists(zip) && File.Exists(zip + ".sig");
+    }
+
+    static bool VerifyFile(string zip)
+    {
+        try { return Verify(File.ReadAllBytes(zip), Convert.FromBase64String(File.ReadAllText(zip + ".sig").Trim())); }
+        catch (Exception e) when (e is IOException or FormatException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// Downloads (if not done already), then puts the new Otto.exe in place of this one and starts it. The caller
+    /// then quits. The running exe can't be overwritten but can be renamed, so: rename ours to Otto.old.exe,
+    /// move the new one in, start it; it deletes Otto.old.exe once we've gone.
+    public static async Task InstallAsync(Release r, IProgress<string>? progress = null, Action? swapped = null)
+    {
+        var exe = Environment.ProcessPath ?? throw new InvalidOperationException("Can't tell where Otto is installed.");
+        var dir = Path.GetDirectoryName(exe)!;
+        await PrepareAsync(r, progress);
+        var work = Staging(r);
+        var zip = Path.Combine(work, r.ZipName);
+        // checked again now: the file sat on disk since it was downloaded
+        if (!VerifyFile(zip))
+        {
+            try { Directory.Delete(work, true); } catch { }
+            throw new InvalidOperationException("The downloaded update changed since it was checked, so it wasn't installed. It will download again next time.");
+        }
 
         progress?.Report("Installing…");
         var extracted = Path.Combine(work, "files");
@@ -134,8 +168,8 @@ static class Updater
         catch { File.Move(old, exe); throw; } // put ourselves back if the swap fails
         swapped?.Invoke();
 
-        try { Directory.Delete(work, true); } catch { }
         Process.Start(new ProcessStartInfo(exe, "--updated --show") { UseShellExecute = false, WorkingDirectory = dir });
+        try { Directory.Delete(work, true); } catch { }
     }
 
     static async Task<byte[]> Download(string url, long maxBytes)

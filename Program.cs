@@ -193,7 +193,9 @@ static class Program
         using var mutex = new Mutex(true, "Otto.SingleInstance", out bool first);
         bool updated = Environment.GetCommandLineArgs().Contains("--updated");
         // right after an update the previous copy is still closing: wait for it instead of quitting
-        if (!first && !(updated && WaitForMutex(mutex))) return;
+        if (!first && updated && !WaitForMutex(mutex)) return;
+        // started again while Otto is running: show the running one instead of silently doing nothing
+        if (!first && !updated && !SingleInstance.TakeOver(mutex)) return;
         Updater.CleanUpAfterUpdate();
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayApp());
@@ -225,6 +227,7 @@ sealed class TrayApp : ApplicationContext
     public TrayApp()
     {
         _ = panel.Handle; // create the handle now so background threads can Invoke onto it
+        SingleInstance.Listen(panel, () => panel.ShowPanel());
         ControlOverlay.Init();
 
         agent = new Agent
@@ -460,8 +463,20 @@ sealed class TrayApp : ApplicationContext
     void ShowUpdate(Updater.Release? r)
     {
         pendingUpdate = r;
-        panel.SetUpdate(r == null ? null : $"Otto {r.Version} is out");
+        panel.SetUpdate(r == null ? null : Updater.IsPrepared(r) ? $"Otto {r.Version} is ready" : $"Otto {r.Version} is out");
         if (updateItem != null) { updateItem.Text = r == null ? "Update" : $"Update to {r.Version}"; updateItem.Visible = r != null; }
+        if (r != null) PrepareUpdate(r);
+    }
+
+    /// Fetch and check the update quietly in the background, so the Update click is near-instant.
+    async void PrepareUpdate(Updater.Release r)
+    {
+        try
+        {
+            await Updater.PrepareAsync(r);
+            if (pendingUpdate == r && !installing) panel.SetUpdate($"Otto {r.Version} is ready");
+        }
+        catch { } // offline or a bad download: the Update click downloads it then, and reports any problem
     }
 
     bool installing;
