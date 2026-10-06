@@ -30,7 +30,7 @@ static class Schedule
         lock (gate)
         {
             Directory.CreateDirectory(Paths.Data);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(items.OrderBy(i => i.Next), new JsonSerializerOptions { WriteIndented = true }));
+            SafeFile.WriteAllText(FilePath, JsonSerializer.Serialize(items.OrderBy(i => i.Next), new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 

@@ -37,17 +37,29 @@ static class Memory
     {
         lock (gate)
         {
-            var notes = File.Exists(NotesPath) ? File.ReadAllText(NotesPath).Trim() : "";
-            JsonObject routines;
-            try { routines = LoadRoutines(); }
-            catch (Exception e) when (e is JsonException or InvalidOperationException or IOException) { routines = new JsonObject(); }
-            var s = "";
-            if (notes.Length > 0) s += "\nThings you've learned about this PC and user:\n" + notes + "\n";
-            if (routines.Count > 0)
-                s += "\nSaved routines (run_routine is far cheaper than redoing these by hand):\n" +
-                     string.Join("\n", routines.Select(kv => $"- {kv.Key}: {kv.Value!["description"]}")) + "\n";
-            return s;
+            // built once per change, not re-read from disk on every step of every task
+            var stamp = (File.GetLastWriteTimeUtc(NotesPath), File.GetLastWriteTimeUtc(RoutinesPath), Dir);
+            if (section != null && stamp == sectionStamp) return section;
+            sectionStamp = stamp;
+            return section = BuildSection();
         }
+    }
+
+    static string? section;
+    static (DateTime, DateTime, string) sectionStamp;
+
+    static string BuildSection()
+    {
+        var notes = File.Exists(NotesPath) ? File.ReadAllText(NotesPath).Trim() : "";
+        JsonObject routines;
+        try { routines = LoadRoutines(); }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or IOException) { routines = new JsonObject(); }
+        var s = "";
+        if (notes.Length > 0) s += "\nThings you've learned about this PC and user:\n" + notes + "\n";
+        if (routines.Count > 0)
+            s += "\nSaved routines (run_routine is far cheaper than redoing these by hand):\n" +
+                 string.Join("\n", routines.Select(kv => $"- {kv.Key}: {kv.Value!["description"]}")) + "\n";
+        return s;
     }
 
     public static string Remember(JsonNode input)
@@ -63,7 +75,7 @@ static class Memory
             lines.Add("- " + note.TrimStart('-', ' '));
             // oldest notes fall off first when it gets too long
             while (lines.Sum(l => l.Length + 1) > MaxNotesChars && lines.Count > 1) lines.RemoveAt(0);
-            File.WriteAllLines(NotesPath, lines);
+            SafeFile.WriteAllLines(NotesPath, lines);
         }
         return "Noted.";
     }
@@ -88,7 +100,7 @@ static class Memory
             Directory.CreateDirectory(Dir);
             var all = Writable(out note);
             all[name] = new JsonObject { ["description"] = input["description"]?.GetValue<string>() ?? "", ["calls"] = calls.DeepClone() };
-            File.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            SafeFile.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         return $"Saved routine '{name}'.{note}";
     }
@@ -101,7 +113,7 @@ static class Memory
         {
             var all = Writable(out note);
             if (!all.Remove(name)) return $"No routine called '{name}'.{note}";
-            File.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            SafeFile.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         return "Deleted." + note;
     }
@@ -152,7 +164,9 @@ static class Memory
         var json = calls.ToJsonString();
         if (values != null)
             foreach (var (k, v) in values)
-                json = json.Replace("{" + k + "}", JsonEncodedText.Encode(v?.ToString() ?? "").ToString());
+                // a placeholder is a plain word; a "name" made of JSON ({"target":"x"}) would match the routine's own structure
+                if (k.Length is > 0 and <= 40 && k.All(ch => char.IsLetterOrDigit(ch) || ch is '_' or '-' or ' '))
+                    json = json.Replace("{" + k + "}", JsonEncodedText.Encode(v?.ToString() ?? "").ToString());
         return JsonNode.Parse(json)!.AsArray();
     }
 

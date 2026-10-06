@@ -235,7 +235,7 @@ static class Updater
             var locked = ec.ExportEncryptedPkcs8PrivateKeyPem(Passphrase,
                 new PbeParameters(PbeEncryptionAlgorithm.Aes256Cbc, HashAlgorithmName.SHA256, 600_000));
             using (var check = ECDsa.Create()) check.ImportFromEncryptedPem(locked, Passphrase); // never write a file we can't read back
-            File.WriteAllText(KeyPath, locked);
+            SafeFile.WriteAllText(KeyPath, locked); // never half a key: the old file stays until the new one is complete
             return true;
         }
 

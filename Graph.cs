@@ -150,13 +150,13 @@ static class Graph
             case "email_list":
             {
                 var folder = input["folder"]?.GetValue<string>() ?? "inbox";
-                int count = Math.Clamp(input["count"]?.GetValue<int>() ?? 10, 1, 25);
+                int count = Math.Clamp(Tools.Int(input, "count", 10), 1, 25);
                 var q = $"/me/mailFolders/{Uri.EscapeDataString(folder)}/messages?$top={count}&$select=id,from,subject,receivedDateTime,isRead,bodyPreview";
                 // Outlook can't combine $search with $filter/$orderby, so search wins. Unread-only sends no $orderby
                 // (Graph restricts mixing $orderby with $filter on messages); whether its default order is newest
                 // first, as the tool description promises, hasn't been checked against a real mailbox.
                 if (input["search"]?.GetValue<string>() is { Length: > 0 } s) q += "&$search=" + Uri.EscapeDataString($"\"{s.Replace("\"", "")}\"");
-                else if (input["unread_only"]?.GetValue<bool>() == true) q += "&$filter=isRead eq false";
+                else if (Tools.Flag(input, "unread_only")) q += "&$filter=isRead eq false";
                 else q += "&$orderby=receivedDateTime desc";
                 var list = (await Get(q, ct))["value"]!.AsArray();
                 if (list.Count == 0) return "No emails found.";
@@ -202,7 +202,7 @@ static class Graph
             case "calendar_list":
             {
                 var from = input["from"]?.GetValue<string>() is string f && DateTime.TryParse(f, out var d) ? d : DateTime.Today;
-                int days = Math.Clamp(input["days"]?.GetValue<int>() ?? 7, 1, 62);
+                int days = Math.Clamp(Tools.Int(input, "days", 7), 1, 62);
                 var q = $"/me/calendarView?startDateTime={from.ToUniversalTime():o}&endDateTime={from.AddDays(days).ToUniversalTime():o}" +
                         "&$select=subject,start,end,location,isAllDay&$orderby=start/dateTime&$top=50";
                 var list = (await Get(q, ct, localTime: true))["value"]!.AsArray();
@@ -221,7 +221,7 @@ static class Graph
             case "calendar_add":
             {
                 var start = DateTime.Parse(S(input, "start"));
-                bool allDay = input["all_day"]?.GetValue<bool>() == true;
+                bool allDay = Tools.Flag(input, "all_day");
                 var end = input["end"]?.GetValue<string>() is string e ? DateTime.Parse(e) : allDay ? start.Date.AddDays(1) : start.AddHours(1);
                 var tz = TimeZoneInfo.Local.Id; // Windows time zone ids are what Graph expects
                 var ev = new JsonObject

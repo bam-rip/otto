@@ -45,7 +45,8 @@ static class Safety
     /// After reading untrusted content, a web address carrying a lot of data in it could be smuggling something
     /// out (e.g. https://evil.example/?d=<your notes>), so those ask first.
     public static bool LooksLikeSmuggling(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Query.Length > 120 || u.AbsolutePath.Length > 200);
+        Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Query.Length > 120 || u.AbsolutePath.Length > 200
+            || u.Host.Length > 80); // data spelled into the name: <your-notes>.evil.example reaches them in the DNS lookup alone
 
     // ---- paths ----
 
@@ -54,7 +55,8 @@ static class Safety
     public static bool IsNetworkPath(string path)
     {
         var p = Environment.ExpandEnvironmentVariables(path.Trim()).Replace('/', '\\');
-        if (p.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return true;
+        if (p.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase) || p.StartsWith(@"\\.\UNC\", StringComparison.OrdinalIgnoreCase)
+            || p.StartsWith(@"\??\UNC\", StringComparison.OrdinalIgnoreCase)) return true;
         if (p.StartsWith(@"\\?\") || p.StartsWith(@"\\.\")) return false; // local device paths
         if (p.StartsWith(@"\\")) return true;
         if (p.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
@@ -73,9 +75,23 @@ static class Safety
         ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".msi", ".msix",
         ".appx", ".appinstaller", ".reg", ".lnk", ".url", ".scr", ".pif", ".cpl", ".msc", ".jar", ".chm", ".application",
         ".appref-ms", ".settingcontent-ms", ".iso", ".img", ".vhd", ".vhdx", ".dll", ".sys", ".inf", ".py", ".pyw",
+        ".msp", ".mst", ".scf", ".library-ms", ".searchconnector-ms", ".diagcab", ".website", ".xll", ".ws", ".gadget", ".psc1",
     };
 
-    public static bool IsRunnable(string path) => Runnable.Contains(Path.GetExtension(path.Trim().TrimEnd('"')).ToLowerInvariant());
+    /// The name Windows will really use: it drops trailing dots and spaces ("run.exe." is run.exe) and reads
+    /// "run.exe::$DATA" as run.exe itself, so a check on the raw text could be stepped around.
+    static string RealName(string path)
+    {
+        var name = Path.GetFileName(path.Trim().Trim('"'));
+        int colon = name.IndexOf(':');
+        if (colon >= 0) name = name[..colon];
+        return name.TrimEnd('.', ' ');
+    }
+
+    public static bool IsRunnable(string path) =>
+        // the file's real name, and also the raw text (notes.txt:hidden.ps1, a stream that can be run from PowerShell)
+        Runnable.Contains(Path.GetExtension(RealName(path)).ToLowerInvariant())
+        || Runnable.Contains(Path.GetExtension(path.Trim().Trim('"')).ToLowerInvariant());
 
     /// Places where a written file runs by itself later (or changes Otto), so writing there always asks.
     public static string? SensitiveWrite(string fullPath)
@@ -97,16 +113,34 @@ static class Safety
         };
         foreach (var (dir, what) in risky)
             if (dir.Length > 3 && IsInside(fullPath, dir)) return what;
-        var name = Path.GetFileName(fullPath).ToLowerInvariant();
+        var name = RealName(fullPath).ToLowerInvariant();
         if (name is ".gitconfig" or ".bashrc" or ".profile" or "hosts") return "a settings file other programs trust";
         return null;
     }
 
-    static bool IsInside(string path, string dir)
+    internal static bool IsInside(string path, string dir)
     {
-        var d = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
-        return Path.GetFullPath(path).StartsWith(d, StringComparison.OrdinalIgnoreCase);
+        var d = LongPath(dir).TrimEnd('\\') + "\\";
+        return LongPath(path).StartsWith(d, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// The full path with short 8.3 names expanded (C:\Users\JONATH~1 is C:\Users\Jonathan), so a short spelling
+    /// can't slip past a folder check. Expands the longest part of the path that exists; the rest is kept as is.
+    internal static string LongPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (!full.Contains('~')) return full;
+        for (var head = full; !string.IsNullOrEmpty(head); head = Path.GetDirectoryName(head))
+        {
+            var buf = new System.Text.StringBuilder(1024);
+            if (GetLongPathName(head, buf, buf.Capacity) is > 0 and < 1024)
+                return buf + full[head.Length..];
+        }
+        return full;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int GetLongPathName(string shortPath, System.Text.StringBuilder longPath, int size);
 
     // ---- links ----
 
@@ -136,9 +170,17 @@ static class Safety
     {
         if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
         if (IPAddress.IsLoopback(ip) || ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any)) return true;
-        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-            return ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6UniqueLocal || ip.IsIPv6Multicast;
         var b = ip.GetAddressBytes();
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6UniqueLocal || ip.IsIPv6Multicast) return true;
+            // IPv6 forms that carry an IPv4 address inside (NAT64 64:ff9b::a.b.c.d, 6to4 2002:a.b.c.d::, and the old
+            // ::a.b.c.d): judged by the address inside, so 64:ff9b::192.168.1.1 isn't a way round the check
+            if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xff && b[3] == 0x9b) return IsPrivate(new IPAddress(b[12..16]));
+            if (b[0] == 0x20 && b[1] == 0x02) return IsPrivate(new IPAddress(b[2..6]));
+            if (b[..12].All(x => x == 0)) return IsPrivate(new IPAddress(b[12..16]));
+            return false;
+        }
         return b[0] == 10 || b[0] == 127 || b[0] == 0
             || b[0] == 172 && b[1] >= 16 && b[1] <= 31
             || b[0] == 192 && b[1] == 168

@@ -10,7 +10,7 @@ namespace Otto;
 static class Calendar
 {
     const string LinkTarget = "Otto:ical";
-    static readonly HttpClient Http = new(Safety.PublicOnlyHandler()) { Timeout = TimeSpan.FromSeconds(30) };
+    static readonly HttpClient Http = new(Safety.PublicOnlyHandler()) { Timeout = TimeSpan.FromSeconds(30), MaxResponseContentBufferSize = 20_000_000 };
 
     public static string? Link => KeyStore.ApiKey(LinkTarget, null);
     public static bool Connected => Link != null;
@@ -41,7 +41,7 @@ static class Calendar
     public static async Task<string> List(JsonNode input, CancellationToken ct)
     {
         var from = input["from"]?.GetValue<string>() is string f && DateTime.TryParse(f, out var d) ? d.Date : DateTime.Today;
-        int days = Math.Clamp(input["days"]?.GetValue<int>() ?? 7, 1, 62);
+        int days = Math.Clamp(Tools.Int(input, "days", 7), 1, 62);
         var ics = await Fetch(ct);
         var events = Occurrences(Parse(ics), from, from.AddDays(days)).ToList();
         if (events.Count == 0) return $"Nothing on the calendar from {from:ddd d MMM} for {days} days.";
@@ -87,6 +87,13 @@ static class Calendar
             if (line == "BEGIN:VEVENT") { cur = new(); except = new(); continue; }
             if (line == "END:VEVENT" && cur != null)
             {
+                // one event with a date nobody can read is skipped, not the whole calendar
+                try { AddEvent(); } catch (Exception e) when (e is FormatException or ArgumentException or OverflowException) { }
+                cur = null;
+                continue;
+            }
+            void AddEvent()
+            {
                 if (cur.TryGetValue("DTSTART", out var ds))
                 {
                     var (start, allDay) = Time(ds.param, ds.value);
@@ -100,8 +107,6 @@ static class Calendar
                             Text(cur.GetValueOrDefault("LOCATION").value ?? ""), start, end, allDay,
                             cur.TryGetValue("RRULE", out var rr) ? rr.value : null, except, recId));
                 }
-                cur = null;
-                continue;
             }
             if (cur == null) continue;
             int colon = line.IndexOf(':');
@@ -112,7 +117,8 @@ static class Calendar
             var param = semi < 0 ? "" : head[(semi + 1)..];
             var value = line[(colon + 1)..];
             if (name == "EXDATE")
-                foreach (var v in value.Split(',')) except.Add(Time(param, v).Item1);
+                foreach (var v in value.Split(','))
+                    try { except.Add(Time(param, v).Item1); } catch (FormatException) { }
             else cur.TryAdd(name, (param, value));
         }
         return events;
@@ -127,7 +133,7 @@ static class Calendar
         foreach (var e in events)
         {
             var length = e.End - e.Start;
-            IEnumerable<DateTime> starts = e.Rule == null || e.RecurrenceId != null ? new[] { e.Start } : Expand(e.Start, e.Rule, to);
+            IEnumerable<DateTime> starts = e.Rule == null || e.RecurrenceId != null ? new[] { e.Start } : Expand(e.Start, e.Rule, to, from);
             foreach (var s in starts)
             {
                 if (e.Rule != null && e.RecurrenceId == null && (e.Except.Contains(s) || moved.Contains((e.Uid, s)))) continue;
@@ -140,7 +146,7 @@ static class Calendar
 
     /// The start times a repeat rule produces, up to 'until'. Covers what calendars actually use:
     /// DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL, COUNT, UNTIL and BYDAY.
-    internal static IEnumerable<DateTime> Expand(DateTime start, string rule, DateTime until)
+    internal static IEnumerable<DateTime> Expand(DateTime start, string rule, DateTime until, DateTime? from = null)
     {
         var parts = rule.Split(';').Select(p => p.Split('=', 2)).Where(p => p.Length == 2)
                         .ToDictionary(p => p[0].ToUpperInvariant(), p => p[1]);
@@ -149,10 +155,16 @@ static class Calendar
         int? count = int.TryParse(parts.GetValueOrDefault("COUNT"), out var c) ? c : null;
         if (parts.TryGetValue("UNTIL", out var u)) { var end = Time("", u).Item1; if (end < until) until = end.AddSeconds(1); }
         var byDay = parts.TryGetValue("BYDAY", out var bd)
-            ? bd.Split(',').Select(x => Day(x[^2..])).Where(x => x != null).Select(x => x!.Value).ToHashSet() : null;
+            ? bd.Split(',').Where(x => x.Length >= 2).Select(x => Day(x[^2..])).Where(x => x != null).Select(x => x!.Value).ToHashSet() : null;
+        if (byDay?.Count == 0) byDay = null; // "BYDAY=" with no days: repeat on the start day, as if it were absent
 
+        // a daily or weekly repeat from years ago jumps straight to the weeks asked about (when nothing is being
+        // counted), instead of walking every day since it began and running out of steps before reaching today
+        int first = 0;
+        if (count == null && from > start && freq is "DAILY" or "WEEKLY")
+            first = Math.Max(0, (int)((from.Value - start).TotalDays / (interval * (freq == "WEEKLY" ? 7 : 1))) - 1);
         int made = 0;
-        for (int step = 0; step < 5000; step++)
+        for (int step = first; step < first + 5000; step++)
         {
             DateTime period = freq switch
             {

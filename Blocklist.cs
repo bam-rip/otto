@@ -30,7 +30,7 @@ static class Blocklist
         set
         {
             Directory.CreateDirectory(Paths.Data);
-            File.WriteAllLines(FilePath, value.Select(v => v.Trim()).Where(v => v.Length >= 2));
+            SafeFile.WriteAllLines(FilePath, value.Select(v => v.Trim()).Where(v => v.Length >= 2));
         }
     }
 

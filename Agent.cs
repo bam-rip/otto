@@ -229,7 +229,7 @@ sealed class Agent
                 foreach (var b in blocks)
                     if (b?["type"]?.GetValue<string>() == "tool_result" && b["content"] is JsonValue v
                         && v.ToString() is { Length: var len } text && len > over && !text.EndsWith(TrimNote))
-                        b["content"] = text[..keepChars] + "\n" + TrimNote;
+                        b["content"] = text.Head(keepChars) + "\n" + TrimNote;
             }
         }
     }
@@ -264,7 +264,7 @@ sealed class Agent
                     JsonArray arr => arr.FirstOrDefault(x => x?["type"]?.GetValue<string>() == "text")?["text"]?.ToString().Split('\n')[0] ?? "",
                     _ => "",
                 };
-                if (first.Length > 120) first = first[..120];
+                first = first.Head(120);
                 r["content"] = (first.StartsWith("Front window") ? first + " " : "") + Stub;
             }
         }

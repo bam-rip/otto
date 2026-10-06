@@ -30,7 +30,7 @@ static class ChatStore
     static string Read(string path)
     {
         var text = Open(File.ReadAllBytes(path), out bool plain);
-        if (plain) try { File.WriteAllBytes(path, Seal(text)); } catch { } // encrypt older chats as they're read
+        if (plain) try { SafeFile.WriteAllBytes(path, Seal(text)); } catch { } // encrypt older chats as they're read
         return text;
     }
 
@@ -76,7 +76,9 @@ static class ChatStore
                 ["saved"] = DateTime.Now.ToString("o"),
                 ["messages"] = copy,
             };
-            File.WriteAllBytes(Path.Combine(Dir, id + ".json"), Seal(doc.ToJsonString()));
+            var path = Path.Combine(Dir, id + ".json");
+            SafeFile.WriteAllBytes(path, Seal(doc.ToJsonString()));
+
             foreach (var old in new DirectoryInfo(Dir).GetFiles("*.json").OrderByDescending(f => f.Name).Skip(Keep))
                 try { old.Delete(); } catch { }
         }

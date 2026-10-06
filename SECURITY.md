@@ -64,6 +64,21 @@ a browser or mail window on screen), these ask you first until your next message
 | 28 | Medium | **A hostile web page or email could freeze a task.** Stripping HTML used a pattern that re-scanned to the end of the page for every unclosed `<script>`; 180 KB of them took 17 seconds, a 3 MB page hours. (1.3.2) | Rewritten as a single pass with the same output (checked on 5000 random pages), and every pattern Otto runs now has a 5-second limit. |
 | 29 | Medium | **"Load model list" could send an API key over plain http** to a custom server; requests were checked but this button wasn't. (1.3.2) | The same check now covers it. |
 
+### Fourth pass (1.3.3): spellings Windows reads differently
+
+| # | Severity | Problem | Fix |
+|---|---|---|---|
+| 30 | High | **A program could be written or run without the usual question** by spelling its name the way Windows quietly corrects: `run.exe.` (trailing dot or space) or `run.exe::$DATA` is `run.exe` to Windows, but didn't look like a program to Otto. | Names are checked the way Windows will read them. A few more runnable types (`.library-ms`, `.scf`, `.msp`, `.diagcab`...) were added to the list. |
+| 31 | Medium | **Short 8.3 names slipped past folder checks.** `C:\Users\JONATH~1\AppData\Local\Otto` is Otto's data folder, but didn't match it as text, so a planted note or routine could be written there without asking. | Paths are expanded to their long names before any folder check. |
+| 32 | Medium | **Two more spellings of network paths** (`\\.\UNC\server\...` and `\??\UNC\...`) weren't recognised, and PowerShell commands using `//server/share` weren't caught. | All of them are refused or ask, like `\\server\share`. |
+| 33 | Medium | **fetch_page's "public addresses only" check could be stepped around with IPv6 wrappers** of a private address (NAT64 `64:ff9b::192.168.1.1`, 6to4, `::127.0.0.1`). | The address inside the wrapper is checked. |
+| 34 | Low | **Data could leave in a web address's name** (`<your notes>.evil.example`), where the long-address check didn't look. | Very long host names ask too, after untrusted content has been read. |
+| 35 | Low | **A page or email could add a calendar event** (say, a fake "sign in to see your payslip" with a link) without asking. | Adding an event asks after untrusted content has been read, like notes and routines. |
+| 36 | Low | **A routine placeholder named with JSON** could rewrite part of the routine's own structure. | Placeholder names are plain words only. |
+| 37 | Low | **A calendar link could return a file of any size**, read whole into memory. | Capped at 20 MB, far beyond any real calendar. |
+
+Also fixed in this pass: one unreadable event no longer hides the whole calendar; daily or weekly repeats that started more than 13 years ago show again; saves of chats, notes, routines, reminders, quick actions, blocked places and the release key can't be left half-written by a crash; exported Word documents open even when a chat contains control characters; text is never cut through the middle of an emoji (a provider can reject a whole request over that); numbers and yes/no values from AI models are accepted in any spelling ("10", 10.0, "true").
+
 How the newer features stay safe:
 - **Scheduled tasks** run without screen control and can't save notes, routines or more schedules; anything that needs your OK is declined and reported. Creating a schedule asks first after Otto has read untrusted content, so a web page can't plant a recurring job.
 - **Places Otto must never touch** are checked against the window title, the program, the browser's address bar, and any address or command Otto is about to use. The list lives in Otto's data folder, which Otto's own file tools can't change without asking.

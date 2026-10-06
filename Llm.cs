@@ -204,6 +204,7 @@ static class Llm
         var extras = new Dictionary<int, JsonNode>();
         string? finish = null;
         JsonNode? usage = null;
+        bool spoke = false; // something visible has been streamed
 
         await foreach (var ev in Events(res, ct))
         {
@@ -216,9 +217,13 @@ static class Llm
             if (d == null) continue;
             if (d["content"]?.GetValue<string>() is { Length: > 0 } piece)
             {
-                bool first = text.ToString().Trim().Length == 0;
                 text.Append(piece);
-                if (text.ToString().Trim().Length > 0) onStream?.Invoke(text.ToString(), first);
+                // the first chunk with something visible starts the bubble; the reply so far is built once per chunk
+                if (onStream != null && (spoke || !string.IsNullOrWhiteSpace(piece)))
+                {
+                    onStream(text.ToString(), !spoke);
+                    spoke = true;
+                }
             }
             if (d["tool_calls"] is JsonArray tcs)
             {

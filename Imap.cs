@@ -197,14 +197,14 @@ static class Imap
         var name = input["folder"]?.GetValue<string>() ?? "inbox";
         var folder = Folder(c, name) ?? throw new ArgumentException($"no folder called '{name}'");
         await folder.OpenAsync(FolderAccess.ReadOnly, ct);
-        int count = Math.Clamp(input["count"]?.GetValue<int>() ?? 10, 1, 25);
+        int count = Math.Clamp(Tools.Int(input, "count", 10), 1, 25);
 
         SearchQuery q = SearchQuery.All;
         if (input["search"]?.GetValue<string>() is { Length: > 0 } s)
             // Gmail's own search syntax and ranking; everyone else gets a plain text search
             q = (c.Capabilities & ImapCapabilities.GMailExt1) != 0 ? SearchQuery.GMailRawSearch(s)
                 : SearchQuery.SubjectContains(s).Or(SearchQuery.FromContains(s)).Or(SearchQuery.BodyContains(s));
-        if (input["unread_only"]?.GetValue<bool>() == true) q = q.And(SearchQuery.NotSeen);
+        if (Tools.Flag(input, "unread_only")) q = q.And(SearchQuery.NotSeen);
 
         var uids = await folder.SearchAsync(q, ct);
         if (uids.Count == 0) return "No emails found.";

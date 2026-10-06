@@ -21,7 +21,7 @@ static class QuickActions
         set
         {
             Directory.CreateDirectory(Paths.Data);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(
+            SafeFile.WriteAllText(FilePath, JsonSerializer.Serialize(
                 value.Where(a => a.Name.Trim().Length > 0 && a.Prompt.Trim().Length > 0).Select(a => new Action(a.Name.Trim(), a.Prompt.Trim())),
                 new JsonSerializerOptions { WriteIndented = true }));
             Changed?.Invoke();

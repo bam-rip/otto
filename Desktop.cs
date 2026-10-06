@@ -155,7 +155,7 @@ static partial class Desktop
                     PressCombo(step["keys"]?.GetValue<string>() ?? throw new ArgumentException($"step {n}: 'key' needs 'keys'"));
                     break;
                 case "wait":
-                    await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(step["seconds"]?.GetValue<double>() ?? 1, 0.1, 10)), ct);
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(Seconds(step["seconds"]), 0.1, 10)), ct);
                     continue;
                 default: throw new ArgumentException($"step {n}: unknown action {action}");
             }
@@ -202,6 +202,9 @@ static partial class Desktop
 
     // any Otto process, not just this one: a headless --api-test run must not type into the user's own panel either
     static bool FrontIsOtto() => Win32.ProcessName(Win32.Foreground()) == "otto";
+
+    static double Seconds(JsonNode? n) =>
+        n is JsonValue v && (v.TryGetValue<double>(out var d) || v.TryGetValue<string>(out var s) && double.TryParse(s, out d)) && double.IsFinite(d) ? d : 1;
 
     internal static int? Num(JsonNode? n)
     {

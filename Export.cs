@@ -22,7 +22,7 @@ static class Export
     {
         static string Run(string text, bool bold = false, int halfPoints = 0) =>
             "<w:r>" + (bold || halfPoints > 0 ? "<w:rPr>" + (bold ? "<w:b/>" : "") + (halfPoints > 0 ? $"<w:sz w:val=\"{halfPoints}\"/>" : "") + "</w:rPr>" : "") +
-            string.Join("<w:br/>", text.Split('\n').Select(t => $"<w:t xml:space=\"preserve\">{SecurityElement.Escape(t)}</w:t>")) + "</w:r>";
+            string.Join("<w:br/>", text.Split('\n').Select(t => $"<w:t xml:space=\"preserve\">{SecurityElement.Escape(XmlSafe(t))}</w:t>")) + "</w:r>";
 
         var body = new StringBuilder();
         body.Append("<w:p>").Append(Run($"Otto chat, {when:d MMMM yyyy h:mm tt}", bold: true, halfPoints: 32)).Append("</w:p>");
@@ -55,6 +55,20 @@ static class Export
             Add("word/document.xml", document);
         }
         return ms.ToArray();
+    }
+
+    /// Text with the characters XML can't hold removed (control codes from pasted pages and emails, half an
+    /// emoji): a single one makes Word call the whole document damaged.
+    internal static string XmlSafe(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) sb.Append(c).Append(s[++i]);
+            else if (!char.IsSurrogate(c) && System.Xml.XmlConvert.IsXmlChar(c)) sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     /// Asks where to save, then writes the chosen format. Returns the path, or null if cancelled.

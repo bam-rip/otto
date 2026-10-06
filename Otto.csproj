@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
@@ -13,7 +13,7 @@
     <Authors>bam-rip</Authors>
     <Copyright>Copyright (c) 2026 bam-rip</Copyright>
     <Description>An AI assistant that operates your Windows PC</Description>
-    <Version>1.3.2</Version>
+    <Version>1.3.3</Version>
     <ApplicationIcon>assets\otto.ico</ApplicationIcon>
     <!-- Otto's interface is English: leave out Windows Forms/WPF/MailKit's translated built-in strings (13 languages, ~6 MB) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
@@ -29,9 +29,27 @@
   </ItemGroup>
   <!-- WPF is referenced only for UI Automation (reading other apps' windows); Otto never draws a WPF window, so WPF's
        DirectX renderer and its shader compiler are left out of the download. -->
-  <Target Name="LeaveOutWpfRenderer" AfterTargets="ComputeResolvedFilesToPublishList">
+  <!-- Likewise the rest of WPF's window toolkit (controls, themes, printing, the Ribbon), and framework parts nothing in
+       Otto references or loads: found by walking every assembly reference from Otto.dll (UI Automation's providers,
+       which it loads by name, kept). msquic is HTTP/3, which Otto's connections never ask for; DiaSymReader writes
+       debug symbols, which a release build has none of. -->
+  <ItemGroup>
+    <UnusedInOtto Include="D3DCompiler_47_cor3;wpfgfx_cor3;msquic;Microsoft.DiaSymReader.Native.amd64" />
+    <UnusedInOtto Include="PresentationFramework;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite" />
+    <UnusedInOtto Include="PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale;PresentationUI" />
+    <UnusedInOtto Include="PresentationFramework-SystemCore;PresentationFramework-SystemData;PresentationFramework-SystemDrawing" />
+    <UnusedInOtto Include="PresentationFramework-SystemXml;PresentationFramework-SystemXmlLinq;System.Windows.Presentation" />
+    <UnusedInOtto Include="ReachFramework;System.Printing;System.Windows.Controls.Ribbon;WindowsFormsIntegration" />
+    <UnusedInOtto Include="System.DirectoryServices;System.Diagnostics.EventLog.Messages;System.Resources.Extensions" />
+    <UnusedInOtto Include="System.Design;System.Drawing.Design;System.Windows.Forms.Design.Editors;Microsoft.Win32.Registry.AccessControl" />
+  </ItemGroup>
+  <Target Name="LeaveOutUnused" AfterTargets="ComputeResolvedFilesToPublishList">
+    <PropertyGroup>
+      <_UnusedList>;@(UnusedInOtto);</_UnusedList>
+    </PropertyGroup>
     <ItemGroup>
-      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'D3DCompiler_47_cor3' Or '%(Filename)' == 'wpfgfx_cor3'" />
+      <_Unused Include="@(ResolvedFileToPublish)" Condition="$(_UnusedList.Contains(';%(ResolvedFileToPublish.Filename);'))" />
+      <ResolvedFileToPublish Remove="@(_Unused)" />
     </ItemGroup>
   </Target>
   <ItemGroup>

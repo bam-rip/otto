@@ -43,10 +43,32 @@ static class Reg
     }
 }
 
+/// Saving Otto's own files whole or not at all: written beside the real file, then swapped in, so a crash or
+/// power cut mid-write leaves the previous version instead of a half-written file (which reads as "no
+/// reminders", "no routines"...).
+static class SafeFile
+{
+    public static void WriteAllBytes(string path, byte[] data)
+    {
+        File.WriteAllBytes(path + ".tmp", data);
+        File.Move(path + ".tmp", path, overwrite: true);
+    }
+
+    public static void WriteAllText(string path, string text) => WriteAllBytes(path, System.Text.Encoding.UTF8.GetBytes(text));
+
+    public static void WriteAllLines(string path, IEnumerable<string> lines) =>
+        WriteAllText(path, string.Concat(lines.Select(l => l + Environment.NewLine)));
+}
+
 static class StringExtensions
 {
     /// At most n characters, with "…" when something was cut.
-    public static string Clip(this string s, int n) => s.Length <= n ? s : s[..n] + "…";
+    public static string Clip(this string s, int n) => s.Length <= n ? s : s.Head(n) + "…";
+
+    /// The first n characters (s if shorter), one fewer if n would cut an emoji or other two-part character in
+    /// half: half of one isn't valid text, and an AI provider can refuse a whole request over it.
+    public static string Head(this string s, int n) =>
+        s.Length <= n ? s : s[..(n > 0 && char.IsHighSurrogate(s[n - 1]) ? n - 1 : n)];
 }
 
 static class Html

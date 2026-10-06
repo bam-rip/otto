@@ -36,7 +36,7 @@ static class Tools
         @"|\b(winget|choco|scoop)\s+(uninstall|remove)\b|\b(Stop-Process|kill|spps)\b[^;|\n]*-Force|\btaskkill\b[^;|\n]*/F\b" +
         @"|\b(Disable-NetAdapter|Disable-PnpDevice|Remove-NetIPAddress|netsh|powercfg|Remove-Printer)\b" +
         // network paths (\\server\share) leak the Windows sign-in to that server
-        @"|(^|[\s'""(=])\\\\[A-Za-z0-9]",
+        @"|(^|[\s'""(=])(\\\\|//)[A-Za-z0-9?.]",
         RegexOptions.IgnoreCase);
 
 
@@ -92,6 +92,13 @@ static class Tools
     internal static string S(JsonNode input, string key) =>
         input[key]?.GetValue<string>() ?? throw new ArgumentException($"missing '{key}'");
 
+    /// A whole-number argument. Models send numbers as 10, 10.0 or "10"; all are fine.
+    internal static int Int(JsonNode input, string key, int fallback) => Desktop.Num(input[key]) ?? fallback;
+
+    /// A yes/no argument, sent as true or "true".
+    internal static bool Flag(JsonNode input, string key) =>
+        input[key] is JsonValue v && (v.TryGetValue<bool>(out var b) ? b : v.TryGetValue<string>(out var s) && bool.TryParse(s, out b) && b);
+
     public static string Describe(string name, JsonNode input) => Graph.Handles(name) ? Graph.Describe(name, input) : name switch
     {
         "web_search" => $"Searching “{S(input, "query")}”",
@@ -123,13 +130,15 @@ static class Tools
 
     static async Task<string> RunTool(string name, JsonNode input, Func<string, bool> confirm, CancellationToken ct)
     {
+        bool Allowed(string action) => Safety.AskIfUntrusted(action) is not string q || confirm(q);
+        // an event planted by an email or page ("Payroll update: sign in at <link>") would look like the user's own
+        if (name == "calendar_add" && !Allowed($"Add “{input["subject"]}” to your calendar")) return "User declined.";
         // Outlook wins when both are set up (it has the calendar too)
         if (Graph.Handles(name) && Graph.SignedIn) return await Graph.Run(name, input, confirm, ct);
         if (Imap.Handles(name) && Imap.Connected) return await Imap.Run(name, input, confirm, ct);
         if (name == "calendar_list" && Calendar.Connected) return await Calendar.List(input, ct);
         if (name.StartsWith("calendar_")) return "No calendar is connected. The user can add their calendar's link in Otto's settings (gear icon).";
         if (Graph.Handles(name)) return "Email isn't connected. The user can set it up in Otto's settings (gear icon).";
-        bool Allowed(string action) => Safety.AskIfUntrusted(action) is not string q || confirm(q);
         switch (name)
         {
             case "web_search": return await Search(S(input, "query"), ct);
@@ -201,7 +210,7 @@ static class Tools
         if (!File.Exists(path)) return false;
         var full = Path.GetFullPath(path);
         var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-        if (full.StartsWith(downloads, StringComparison.OrdinalIgnoreCase) || full.StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase))
+        if (Safety.IsInside(full, downloads) || Safety.IsInside(full, Path.GetTempPath()))
             return true;
         try { return File.Exists(full + ":Zone.Identifier"); } // Windows' "came from the internet" mark
         catch { return false; }
@@ -227,7 +236,7 @@ static class Tools
     }
 
     static string Truncate(string s, int max = MaxOutput) =>
-        s.Length <= max ? s : s[..max] + "\n…(truncated; use 'find' on fetch_page, or read a smaller part)";
+        s.Length <= max ? s : s.Head(max) + "\n…(truncated; use 'find' on fetch_page, or read a smaller part)";
 
     // ---- web ----
 
