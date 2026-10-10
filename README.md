@@ -28,7 +28,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 - **Ask about anything on screen.** Select text in any app and press Ctrl+Alt+A: it lands in Otto's panel, ready for your question. With nothing selected, Otto gets a picture of the window instead.
 - **Quick actions.** Save requests you make often ("Morning briefing") as one-click buttons on the start screen and in the tray menu.
 - **Export chats** as a Word document, text or Markdown (right-click in the chat).
-- **Add-ons** (Settings → Addons): optional extras you download only if you want them, and remove any time. The first is **Reaction images**: 38 square reaction pictures. Ask Otto for a meme and it replies with one right in its chat, or have it paste one into another app ("reply to that on Discord with a facepalm"). It picks the one whose meaning fits, and only sends one when you ask or it clearly fits.
+- **Add-ons** (Settings → Addons): optional extras you download only if you want them, and remove any time. The first is **Reaction images**: 79 square reaction pictures. Ask Otto for a meme and it replies with one right in its chat, or have it paste one into another app ("reply to that on Discord with a facepalm"). It picks the one whose meaning fits, and only sends one when you ask or it clearly fits.
 - **A spending limit.** Set a monthly limit: Otto warns you at 80% and stops at the limit, even partway through a task.
 - **Places Otto must never touch.** List websites or apps (your bank, a work app) and Otto won't open, read or click in them.
 - **Your look.** Dark or light, the panel on the left or right, and four text sizes.
