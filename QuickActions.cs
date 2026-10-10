@@ -16,7 +16,13 @@ static class QuickActions
         get
         {
             try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<List<Action>>(File.ReadAllText(FilePath)) ?? new() : new(); }
-            catch (Exception e) when (e is JsonException or IOException) { return new(); }
+            catch (JsonException)
+            {
+                // damaged: keep a copy before the next save replaces it
+                try { File.Copy(FilePath, Path.Combine(Paths.Data, "quick-actions.damaged.json"), overwrite: false); } catch (IOException) { }
+                return new();
+            }
+            catch (IOException) { return new(); }
         }
         set
         {

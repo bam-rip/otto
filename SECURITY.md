@@ -77,7 +77,19 @@ a browser or mail window on screen), these ask you first until your next message
 | 36 | Low | **A routine placeholder named with JSON** could rewrite part of the routine's own structure. | Placeholder names are plain words only. |
 | 37 | Low | **A calendar link could return a file of any size**, read whole into memory. | Capped at 20 MB, far beyond any real calendar. |
 
-Also fixed in this pass: one unreadable event no longer hides the whole calendar; daily or weekly repeats that started more than 13 years ago show again; saves of chats, notes, routines, reminders, quick actions, blocked places and the release key can't be left half-written by a crash; exported Word documents open even when a chat contains control characters; text is never cut through the middle of an emoji (a provider can reject a whole request over that); numbers and yes/no values from AI models are accepted in any spelling ("10", 10.0, "true").
+### Fifth pass (1.3.4): screen text and documents
+
+| # | Severity | Problem | Fix |
+|---|---|---|---|
+| 38 | Medium | **Uninstall could delete someone's own files.** If Otto.exe sat in a folder called `Otto` that also held other folders (say `D:\Otto\projects`), removing Otto removed the whole folder. | The folder is only removed when it holds nothing but Otto's own files; otherwise just the exe goes. |
+| 39 | Medium | **A damaged reminders file was wiped by the next reminder.** It read as "nothing scheduled", and adding one saved over the rest. | The damaged file is moved aside first (`schedule.damaged-<time>.json`); quick actions keep a copy the same way. |
+| 40 | Low | **A spending total that ever became "not a number" would switch the limit off for good.** | Only real, positive costs are added, and an unreadable total counts as zero. |
+
+How the new features stay safe:
+- **Text read off the screen (OCR)** runs entirely on your PC with Windows' own engine; nothing extra is sent anywhere. Because a window with no readable controls could be showing anyone's words (a remote desktop, a game's chat, a scanned letter), anything read this way counts as untrusted content, like a web page or an email.
+- **Word, Excel, PowerPoint and PDF files** are read without Office. The XML inside Office files is read with DTDs refused, so a crafted file can't expand into gigabytes or reach for other files. Every part is size-checked before it's opened, sheets stop at 2,000 rows, and PDFs are read a part at a time. PDFs are drawn by Windows' own PDF reader and then read by OCR, and the file is closed as soon as reading ends (an early version kept it locked).
+
+Also fixed in the fourth pass: one unreadable event no longer hides the whole calendar; daily or weekly repeats that started more than 13 years ago show again; saves of chats, notes, routines, reminders, quick actions, blocked places and the release key can't be left half-written by a crash; exported Word documents open even when a chat contains control characters; text is never cut through the middle of an emoji (a provider can reject a whole request over that); numbers and yes/no values from AI models are accepted in any spelling ("10", 10.0, "true").
 
 How the newer features stay safe:
 - **Scheduled tasks** run without screen control and can't save notes, routines or more schedules; anything that needs your OK is declined and reported. Creating a schedule asks first after Otto has read untrusted content, so a web page can't plant a recurring job.

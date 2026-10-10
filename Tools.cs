@@ -11,6 +11,7 @@ static class Tools
 {
     const int MaxOutput = 6_000; // every char sent back is billed again on each later step
     const int PageChars = 5_000;
+    const int PdfChars = 20_000; // a PDF is read in parts of about this size; older results are cut down later (Agent.TrimOldResults)
     static readonly HttpClient Http = CreateHttp();
     /// Only commands that destroy data, change how Windows itself works, or run code fetched from the internet
     /// need a yes. Reading, creating, downloading, installing from official repos, closing apps etc. just run.
@@ -79,8 +80,8 @@ static class Tools
        "input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","focus","minimize","maximize","restore","close"]},"title":{"type":"string"}},"required":["action"]}},
       {"name":"list_dir","description":"List the files and folders in a directory.",
        "input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
-      {"name":"read_file","description":"Read a text file or the text of a .docx document.",
-       "input_schema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}},
+      {"name":"read_file","description":"Read a text file, or the text of a Word, Excel, PowerPoint or PDF file (long PDFs in parts: continue from 'page').",
+       "input_schema":{"type":"object","properties":{"path":{"type":"string"},"page":{"type":"integer"}},"required":["path"]}},
       {"name":"write_file","description":"Create or overwrite a text file (old version is backed up).",
        "input_schema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},
       {"name":"run_powershell","description":"Run PowerShell, get its output. Deleting or system-changing commands ask the user first.",
@@ -166,7 +167,7 @@ static class Tools
                 return await Apps.Open(target, ct);
             }
             case "list_dir": Safety.RefuseNetworkPath(S(input, "path")); return ListDir(S(input, "path"));
-            case "read_file": Safety.RefuseNetworkPath(S(input, "path")); return ReadFile(S(input, "path"));
+            case "read_file": Safety.RefuseNetworkPath(S(input, "path")); return await ReadFile(S(input, "path"), Int(input, "page", 1), ct);
             case "write_file":
             {
                 Safety.RefuseNetworkPath(S(input, "path"));
@@ -431,18 +432,15 @@ static class Tools
         return sb.Length > 0 ? sb.ToString() : "(empty)";
     }
 
-    static string ReadFile(string path)
+    static async Task<string> ReadFile(string path, int page, CancellationToken ct)
     {
         path = Environment.ExpandEnvironmentVariables(path);
-        if (path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
-        {
-            using var zip = ZipFile.OpenRead(path);
-            var entry = zip.GetEntry("word/document.xml") ?? throw new InvalidDataException($"{path} isn't a Word document.");
-            if (entry.Length > 50_000_000) return $"{path} is too big to read whole ({entry.Length / 1_000_000} MB of text).";
-            using var reader = new StreamReader(entry.Open());
-            var xml = Regex.Replace(reader.ReadToEnd(), "</w:p>", "\n");
-            return Truncate(Html.StripTags(xml));
-        }
+        if (Documents.Handles(path)) return Truncate(Documents.Read(path));
+        if (path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            return Ocr.Available ? await Ocr.ReadPdfAsync(path, page, PdfChars, ct)
+                : $"{path} is a PDF, and reading PDFs needs Windows' text recognition, which isn't installed for any of your languages. Open it with 'open' and read it on screen.";
+        if (Path.GetExtension(path).ToLowerInvariant() is ".doc" or ".xls" or ".ppt")
+            return $"{path} is an old-style Office file ({Path.GetExtension(path)}), which can't be read directly. Open it with 'open' and read it on screen, or save it in the newer format first.";
         var info = new FileInfo(path);
         if (info.Length > 20_000_000) return $"{path} is {info.Length / 1_000_000} MB; too big to read whole. Use run_powershell (Get-Content -TotalCount / Select-String) for parts.";
         var text = File.ReadAllText(path);

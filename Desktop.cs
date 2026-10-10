@@ -18,7 +18,7 @@ static partial class Desktop
     public static JsonNode ToolDefinition() => JsonNode.Parse($$$"""
     {"name":"computer","description":"Use the screen ({{{ShotSize.Width}}}x{{{ShotSize.Height}}} px). Runs 'steps' in order, then reports the screen: by default a text list like [7] button \"Save\" @412,88 (click with \"element\":7).",
      "input_schema":{"type":"object","properties":{
-       "observe":{"type":"string","enum":["ui","screenshot","none"],"description":"default ui"},
+       "observe":{"type":"string","enum":["ui","text","screenshot","none"],"description":"default ui. text: words read off the window by OCR, for apps with no ui list (games, canvases, remote desktops); cheaper than a screenshot"},
        "steps":{"type":"array","items":{"type":"object","properties":{
          "action":{"type":"string","enum":["screenshot","click","double_click","right_click","middle_click","move","drag","scroll","type","key","wait","zoom"],
            "description":"clicks/move: element or x,y. drag: to x2,y2. scroll: direction, amount. type: text. key: e.g. 'ctrl+s'. wait: seconds. zoom: box x,y,x2,y2 at full detail."},
@@ -163,7 +163,7 @@ static partial class Desktop
         }
 
         if (acted) await Settle(ct);
-        var seen = Observe(input["observe"]?.GetValue<string>() ?? "ui", ct);
+        var seen = await Observe(input["observe"]?.GetValue<string>() ?? "ui", ct);
         if (repeats >= 2 && seen is JsonValue v && v.ToString().StartsWith(Unchanged))
             return JsonValue.Create(v + " You've made this exact call 3 times with no effect. Try something different: a keyboard shortcut, another control, a screenshot, or escalate.")!;
         return seen;
@@ -225,7 +225,7 @@ static partial class Desktop
     /// "Nothing changed: ...", errors) are not readings; they cost little and never replace one.
     internal static bool IsReading(JsonNode? content) =>
         content is JsonArray blocks ? blocks.Any(b => b?["type"]?.GetValue<string>() == "image")
-        : content is JsonValue v && v.TryGetValue<string>(out var s) && s.Contains(UiTree.ListingMarker);
+        : content is JsonValue v && v.TryGetValue<string>(out var s) && (s.Contains(UiTree.ListingMarker) || s.Contains(OcrMarker));
 
     static string? lastInput, lastUi;
     static byte[]? lastThumb;
@@ -233,14 +233,14 @@ static partial class Desktop
     static int repeats, readings, lastUiAt, lastThumbAt;
 
     /// Called at the start of each user turn: earlier observations may no longer be in the history.
-    public static void NewTurn() { lastInput = lastUi = null; lastThumb = null; repeats = readings = 0; }
+    public static void NewTurn() { lastInput = lastUi = lastOcr = null; lastThumb = null; repeats = readings = 0; }
 
     // "Nothing changed" is only safe if that earlier reading is still in the model's history.
     static bool Recent(int at) => readings - at < KeptReadings;
 
     /// What the model gets back. If the screen is the same as its last look (still in its history),
     /// a one-line note replaces the whole list or image.
-    static JsonNode Observe(string observe, CancellationToken ct)
+    static async Task<JsonNode> Observe(string observe, CancellationToken ct)
     {
         if (observe == "none") return JsonValue.Create("Done.")!;
         Blocklist.CheckFront(); // it may have navigated somewhere blocked: don't send that screen to the AI
@@ -255,13 +255,56 @@ static partial class Desktop
                 lastUiAt = ++readings;
                 return JsonValue.Create(text)!;
             }
-            // canvases, games and some old apps expose nothing useful: show the picture instead
+            // canvases, games and some old apps expose nothing useful: read their words by OCR (cheap, and works on
+            // every model), and only if that finds little too, show the picture
+            if (await ScreenText(ct) is string words)
+                return JsonValue.Create(text + "(Few readable controls here, so this is text read off the window. Ask for a screenshot if you need to see it.)\n" + words)!;
             var shot = ScreenshotUnlessSame();
             if (shot is JsonArray arr) arr.Insert(0, new JsonObject { ["type"] = "text", ["text"] = text + "(Few readable controls here, so here's a screenshot.)" });
             return shot;
         }
+        if (observe == "text")
+            return JsonValue.Create(await ScreenText(ct, minLines: 0) ?? "No text could be read off the front window.")!;
         return ScreenshotUnlessSame();
     }
+
+    /// The front window's words by OCR, one line each with where to click it (screenshot coordinates), or null when
+    /// fewer than minLines lines were found (OCR not installed counts as none). A repeat of the last reading still
+    /// in the model's history becomes a one-line note.
+    internal static async Task<string?> ScreenText(CancellationToken ct, int minLines = 4)
+    {
+        if (!Ocr.Available) return null;
+        var area = Screen;
+        if (Win32.GetWindowRect(Win32.Foreground(), out var r))
+        {
+            var win = Rectangle.Intersect(area, Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom));
+            if (win.Width > 40 && win.Height > 40) area = win;
+        }
+        using var bmp = new Bitmap(area.Width, area.Height, PixelFormat.Format32bppArgb);
+        try { using var g = Graphics.FromImage(bmp); g.CopyFromScreen(area.Location, Point.Empty, area.Size); }
+        catch (System.ComponentModel.Win32Exception) { return null; } // secure desktop
+        var lines = await Ocr.ReadAsync(bmp, ct);
+        if (lines.Count == 0 || lines.Count < minLines) return null;
+        // what OCR reads is whatever the window shows: a remote desktop's web page, a game's chat, a scanned letter.
+        // Unlike a ui list, there's no telling whose words they are, so it's treated like a web page or email.
+        Safety.Saw("screen");
+        var sb = new System.Text.StringBuilder($"Front window: {Win32.Title(Win32.Foreground())}\n{OcrMarker}, may misread; click with x,y):\n");
+        foreach (var l in lines.Take(200))
+        {
+            var c = ToShot(new Point(area.X + l.Box.X + l.Box.Width / 2, area.Y + l.Box.Y + l.Box.Height / 2));
+            sb.Append('"').Append(l.Text.Clip(160)).Append("\" @").Append(c.X).Append(',').Append(c.Y).Append('\n');
+        }
+        var text = sb.ToString().Head(MaxText);
+        if (text == lastOcr && Recent(lastOcrAt)) return $"{Unchanged}: the window's text is exactly as in your last look.";
+        lastOcr = text;
+        lastOcrAt = ++readings;
+        return text;
+    }
+
+    const int MaxText = 8_000;
+    internal const string OcrMarker = "Text on screen (OCR";
+    static string? lastOcr;
+    static int lastOcrAt;
 
     static JsonNode ScreenshotUnlessSame()
     {

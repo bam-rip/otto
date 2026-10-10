@@ -13,7 +13,7 @@ It lives in the system tray. Press **Ctrl+Shift+J** and a panel slides in from t
 ## What it can do
 
 - **See and control the screen.** It reads windows through Windows' accessibility interface (cheap and accurate), and uses screenshots when it needs to see something visual. It can click, type, drag, scroll and press shortcuts.
-- **Work with your apps and files.** It can open any installed app by name, manage windows, read and write files (including `.docx`), and run PowerShell.
+- **Work with your apps and files.** It can open any installed app by name, manage windows, read and write files, read Word, Excel, PowerPoint and PDF documents (scanned ones too), and run PowerShell. Where an app shows no readable controls (games, canvases, remote desktops) it reads the text off the screen with Windows' own built-in text recognition, on your PC, which is cheaper than a screenshot and works with AI models that can't see images.
 - **Use the web.** It searches, reads pages, and works inside your normal browser.
 - **Email** (experimental): list, search, read, draft and send email, always asking before anything is sent. Works with Gmail, Yahoo, iCloud, Fastmail and most other providers through an app password, or with Outlook, Hotmail and Microsoft 365 (which adds the calendar).
 - **Reminders and scheduled tasks.** "Remind me at 5 to call Mum", or "every weekday at 8, summarise my unread email". Reminders pop up as notifications; tasks run on their own in the background (without touching your screen) and notify you when done. Anything that came due while the PC was off runs when Otto starts. See or cancel them from the tray menu.

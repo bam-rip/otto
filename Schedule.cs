@@ -15,13 +15,21 @@ static class Schedule
     static string FilePath => Path.Combine(Paths.Data, "schedule.json");
     static readonly object gate = new();
 
-    public static List<Item> All()
+    public static List<Item> All() => Load(forChange: false);
+
+    /// The saved items. A damaged schedule.json reads as empty; when it's about to be rewritten (forChange), it's
+    /// first moved aside to schedule.damaged-<time>.json, so adding one reminder can't wipe out the rest for good.
+    static List<Item> Load(bool forChange)
     {
         lock (gate)
         {
             if (!File.Exists(FilePath)) return new();
             try { return JsonSerializer.Deserialize<List<Item>>(File.ReadAllText(FilePath)) ?? new(); }
-            catch (JsonException) { return new(); }
+            catch (JsonException)
+            {
+                if (forChange) File.Move(FilePath, Path.Combine(Paths.Data, $"schedule.damaged-{DateTime.Now:yyyyMMdd-HHmmss}.json"));
+                return new();
+            }
         }
     }
 
@@ -46,7 +54,7 @@ static class Schedule
             when = NextAfter(when, repeat, t);
         }
         var item = new Item(Guid.NewGuid().ToString("N")[..8], kind, text.Trim(), when, repeat, t);
-        lock (gate) { var all = All(); all.Add(item); Save(all); }
+        lock (gate) { var all = Load(forChange: true); all.Add(item); Save(all); }
         return item;
     }
 
@@ -54,7 +62,7 @@ static class Schedule
     {
         lock (gate)
         {
-            var all = All();
+            var all = Load(forChange: true);
             int n = all.RemoveAll(i => i.Id == id.Trim());
             if (n > 0) Save(all);
             return n > 0;

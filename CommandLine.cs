@@ -54,13 +54,17 @@ static class CommandLine
         return false;
     }
 
-    /// Otto.exe --dump-ui → writes what the agent would "see" of the front window, no API calls
+    /// Otto.exe --dump-ui → writes what the agent would "see" of the front window (ui list and OCR), no API calls
     static void DumpUi(int at)
     {
         Thread.Sleep(1500);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var (text, count) = UiTree.Describe(p => p, CancellationToken.None);
-        File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-ui.txt"), $"{count} elements in {sw.ElapsedMilliseconds} ms\n{text}");
+        long uiMs = sw.ElapsedMilliseconds;
+        sw.Restart();
+        var ocr = Desktop.ScreenText(CancellationToken.None, minLines: 0).GetAwaiter().GetResult() ?? "(no text, or OCR not installed)";
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "otto-ui.txt"),
+            $"{count} elements in {uiMs} ms\n{text}\n\n=== OCR in {sw.ElapsedMilliseconds} ms ===\n{ocr}");
     }
 
     /// Otto.exe --bench → timings of the local per-step work, in %TEMP%\otto-bench.txt

@@ -30,6 +30,7 @@ static class Spending
     public static string? Add(double usd, DateTime? now = null)
     {
         var t = now ?? DateTime.Now;
+        if (!double.IsFinite(usd) || usd <= 0) return null; // a NaN saved once would switch the limit off for good
         lock (gate)
         {
             var total = ThisMonthTotal(t) + usd;
@@ -61,7 +62,7 @@ static class Spending
     }
 
     static double Read(string name, double fallback) =>
-        double.TryParse(ReadString(name), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+        double.TryParse(ReadString(name), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && double.IsFinite(v) ? v : fallback;
 
     static void Write(string name, double v) => WriteString(name, v.ToString("R", CultureInfo.InvariantCulture));
 

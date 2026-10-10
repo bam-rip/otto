@@ -51,6 +51,9 @@ static class Uninstall
         {
             var dir = Path.GetDirectoryName(exe)!;
             bool ownFolder = Path.GetFileName(dir).Equals("Otto", StringComparison.OrdinalIgnoreCase)
+                             // a folder that also holds other folders isn't just Otto's: someone's D:\Otto with their own
+                             // things in it must not be wiped, so then only the exe goes
+                             && Directory.GetDirectories(dir).Length == 0
                              && Directory.GetFiles(dir).All(x => Path.GetFileName(x).StartsWith("Otto", StringComparison.OrdinalIgnoreCase) || x.EndsWith(".dll", StringComparison.OrdinalIgnoreCase));
             var target = ownFolder ? $"rmdir /s /q \"{dir}\"" : $"del /f /q \"{exe}\"";
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c timeout /t 3 /nobreak >nul & {target}")
