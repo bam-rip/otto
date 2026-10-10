@@ -13,7 +13,7 @@
     <Authors>bam-rip</Authors>
     <Copyright>Copyright (c) 2026 bam-rip</Copyright>
     <Description>An AI assistant that operates your Windows PC</Description>
-    <Version>1.3.4</Version>
+    <Version>1.3.5</Version>
     <ApplicationIcon>assets\otto.ico</ApplicationIcon>
     <!-- Otto's interface is English: leave out Windows Forms/WPF/MailKit's translated built-in strings (13 languages, ~6 MB) -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

@@ -58,6 +58,7 @@ static class Tools
         tools.Add(Desktop.ToolDefinition());
         foreach (var t in Memory.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         foreach (var t in Schedule.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
+        if (Reactions.Available && Reactions.All().Count > 0) tools.Add(Reactions.ToolDefinition()); // addon: only when installed
         // email/calendar tools only exist once signed in, so they cost nothing otherwise
         if (Graph.SignedIn) foreach (var t in Graph.ToolDefinitions().AsArray()) tools.Add(t!.DeepClone());
         else
@@ -119,6 +120,7 @@ static class Tools
         "schedule_list" => "Checking what's scheduled",
         "schedule_cancel" => "Cancelling a scheduled item",
         "escalate" => "Thinking harder (switching to the bigger model)",
+        "reaction_image" => $"Copying the “{S(input, "name")}” reaction picture",
         _ => name,
     };
 
@@ -200,6 +202,7 @@ static class Tools
             case "schedule":
                 return Allowed($"Schedule this {input["kind"]} ({input["repeat"] ?? "once"}, {input["when"]}): {input["text"]}") ? Schedule.Run(name, input) : "User declined.";
             case "schedule_list" or "schedule_cancel": return Schedule.Run(name, input);
+            case "reaction_image": return Reactions.Available ? Reactions.Copy(S(input, "name")) : "The reaction images addon isn't installed (Settings → Addons).";
             default: throw new ArgumentException($"Unknown tool {name}");
         }
     }

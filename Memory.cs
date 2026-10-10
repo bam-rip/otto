@@ -76,6 +76,7 @@ static class Memory
             // oldest notes fall off first when it gets too long
             while (lines.Sum(l => l.Length + 1) > MaxNotesChars && lines.Count > 1) lines.RemoveAt(0);
             SafeFile.WriteAllLines(NotesPath, lines);
+            section = null;
         }
         return "Noted.";
     }
@@ -101,6 +102,7 @@ static class Memory
             var all = Writable(out note);
             all[name] = new JsonObject { ["description"] = input["description"]?.GetValue<string>() ?? "", ["calls"] = calls.DeepClone() };
             SafeFile.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            section = null; // our own save: rebuild even if the file's time didn't visibly move
         }
         return $"Saved routine '{name}'.{note}";
     }
@@ -114,6 +116,7 @@ static class Memory
             var all = Writable(out note);
             if (!all.Remove(name)) return $"No routine called '{name}'.{note}";
             SafeFile.WriteAllText(RoutinesPath, all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            section = null; // our own save: rebuild even if the file's time didn't visibly move
         }
         return "Deleted." + note;
     }

@@ -7,12 +7,12 @@ namespace Otto;
 static partial class SettingsWindow
 {
     public const string AI = "AI", Mail = "Email and calendar", Look = "Look and feel", Chat = "Chat and voice",
-        Quick = "Quick actions", Reminders = "Reminders", Spend = "Spending", Safety = "Privacy and safety", About = "Updates and about";
+        Quick = "Quick actions", Reminders = "Reminders", Spend = "Spending", Addons = "Addons", Safety = "Privacy and safety", About = "Updates and about";
 
     static readonly (string name, string glyph)[] Sections =
     {
         (AI, ""), (Mail, ""), (Look, ""), (Chat, ""), (Quick, ""),
-        (Reminders, ""), (Spend, ""), (Safety, ""), (About, ""),
+        (Reminders, ""), (Spend, ""), (Addons, ""), (Safety, ""), (About, ""),
     };
 
     public static void Show() => Show(null);
@@ -50,6 +50,8 @@ static partial class SettingsWindow
         f.OpenSection(AI);
         f.ScrollContent(330); // down to the model pickers (dropdowns you can also type in)
         Shot("models");
+        f.OpenSection(Addons);
+        Shot("addons");
         try
         {
             Theme.Light = true; f.Recolor(); f.OpenSection(Safety); Shot("light");
@@ -187,6 +189,7 @@ static partial class SettingsWindow
                 case Quick: BuildQuick(p); break;
                 case Reminders: BuildReminders(p); break;
                 case Spend: BuildSpending(p); break;
+                case Addons: BuildAddons(p); break;
                 case Safety: BuildSafety(p); break;
                 case About: BuildAbout(p); break;
             }
@@ -617,6 +620,48 @@ static partial class SettingsWindow
                 });
             used.Controls.Add(Ui.Hint("Counted for Claude, whose prices Otto knows. Other providers don't report a price, so set a limit in their own console too " +
                                       "(Anthropic: console.anthropic.com → Limits). Google Gemini's free tier costs nothing.", W - 40));
+        }
+
+        // ---------------- addons ----------------
+
+        void BuildAddons(FlowLayoutPanel p)
+        {
+            var card = Ui.Card(p, "Extras", "Optional add-ons, downloaded only if you want them, so Otto itself stays small. Remove one any time to free the space.");
+            var items = Ui.Stack();
+            card.Controls.Add(items);
+            var status = Ui.Hint("", W - 40);
+            card.Controls.Add(status);
+            bool busy = false;
+            void Fill()
+            {
+                Ui.Refill(items, Otto.Addons.Catalog.Select(a =>
+                {
+                    bool installed = Otto.Addons.IsInstalled(a.Id);
+                    var action = Ui.Button(installed ? "Remove" : "Install", primary: !installed, small: true);
+                    action.Click += async (_, _) =>
+                    {
+                        if (busy) return;
+                        busy = true;
+                        try
+                        {
+                            if (installed) { Otto.Addons.Remove(a.Id); status.Text = $"Removed {a.Name}."; }
+                            else
+                            {
+                                status.Text = $"Downloading {a.Name}…";
+                                await Otto.Addons.InstallAsync(a);
+                                if (!status.IsDisposed) status.Text = $"{a.Name} installed.";
+                            }
+                        }
+                        catch (Exception ex) { if (!status.IsDisposed) status.Text = "Couldn't do that: " + Agent.ErrorText(ex).Clip(90); }
+                        finally { busy = false; }
+                        if (!items.IsDisposed) Fill();
+                    };
+                    var detail = a.Description + (installed ? $" Using {Otto.Addons.SizeOnDisk(a.Id)}." : $" Download {a.Size}.");
+                    return Ui.ItemCard(a.Name, detail, installed ? "INSTALLED" : null, action);
+                }), "No add-ons available yet.");
+            }
+            Fill();
+            card.Controls.Add(Ui.Hint("Add-ons are signed with the same key as Otto's updates and checked before they're unpacked. They contain pictures and lists only, never programs.", W - 40));
         }
 
         // ---------------- privacy and safety ----------------

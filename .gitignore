@@ -10,3 +10,6 @@ obj/
 
 # release downloads (attached to GitHub releases, not committed)
 release/
+
+# addon contents (pictures etc.): shipped as signed zips on the 'addons' release, not kept in the repo
+addons-src/

@@ -171,19 +171,19 @@ static class Updater
         try { Directory.Delete(work, true); } catch { }
     }
 
-    static async Task<byte[]> Download(string url, long maxBytes)
+    internal static async Task<byte[]> Download(string url, long maxBytes, CancellationToken ct = default)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Accept.Clear();
         req.Headers.Accept.ParseAdd("application/octet-stream");
-        using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+        using var res = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         res.EnsureSuccessStatusCode();
         if (res.Content.Headers.ContentLength > maxBytes) throw new InvalidOperationException("The download is far bigger than expected.");
-        using var s = await res.Content.ReadAsStreamAsync();
+        using var s = await res.Content.ReadAsStreamAsync(ct);
         var buf = new MemoryStream();
         var chunk = new byte[81920];
         int n;
-        while ((n = await s.ReadAsync(chunk)) > 0)
+        while ((n = await s.ReadAsync(chunk, ct)) > 0)
         {
             buf.Write(chunk, 0, n);
             if (buf.Length > maxBytes) throw new InvalidOperationException("The download is far bigger than expected.");
