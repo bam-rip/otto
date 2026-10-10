@@ -13,7 +13,7 @@ static class Addons
     public static readonly Addon[] Catalog =
     {
         new("reactions", "Reaction images",
-            "38 square reaction pictures Otto can paste into chats and comments when you ask, e.g. \"reply with a facepalm\".", "about 1.4 MB"),
+            "38 square reaction pictures. Ask Otto for a meme and it replies with one, or have it paste one into another app.", "about 1.4 MB"),
     };
 
     const string ReleaseUrl = "https://github.com/bam-rip/otto/releases/download/addons/";

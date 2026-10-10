@@ -73,6 +73,7 @@ sealed class TrayApp : ApplicationContext
             },
             Animate = () => Prefs.AnimateReplies,
             OnTool = t => panel.AddTool(t),
+            OnPicture = path => { if (!replySounded) { replySounded = true; Sfx.Reply(); } panel.AddPicture(path); },
             OnControl = on =>
             {
                 if (on == controlling) return;
@@ -338,6 +339,9 @@ sealed class TrayApp : ApplicationContext
             {
                 var type = b?["type"]?.GetValue<string>();
                 if (type == "text" && b!["text"]?.ToString() is { Length: > 0 } t) panel.AddOttoInstant(t);
+                else if (type == "tool_use" && b!["name"]?.ToString() == "reaction_image" && Reactions.ForChat(b["input"]!)
+                         && Reactions.PathOf(b["input"]?["name"]?.ToString() ?? "") is string pic)
+                    panel.AddPicture(pic); // a reaction Otto sent in this chat comes back as the picture, not a note
                 else if (type == "tool_use")
                 {
                     string label;

@@ -45,23 +45,36 @@ static class Reactions
         return new JsonObject
         {
             ["name"] = "reaction_image",
-            ["description"] = "Copy a reaction picture to the clipboard, then paste it (ctrl+v with the computer tool) into a chat or comment box. " +
-                              "Only when the user asks for a reaction/meme, or asks you to reply somewhere and a picture clearly fits; never in your own replies " +
-                              "or by habit. Pick the one whose meaning matches the moment; if none fits, don't send one. Pictures:\n" + menu,
+            ["description"] = "Send a reaction picture. where 'chat': show it right here in your chat with the user. If they ask for a meme or reaction " +
+                              "and don't name another app, that means here: use 'chat' and never ask where to send it. where 'paste' (only when they name an app or a post): copy it to the clipboard, then paste it (ctrl+v with the computer tool) into " +
+                              "another app's chat or comment box. Only when the user asks for a reaction/meme, or asks you to reply somewhere and a picture " +
+                              "clearly fits; never by habit or on every message. Pick the one whose meaning matches the moment; if none fits, don't send one. Pictures:\n" + menu,
             ["input_schema"] = new JsonObject
             {
                 ["type"] = "object",
-                ["properties"] = new JsonObject { ["name"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray(All().Select(r => (JsonNode)r.Name).ToArray()) } },
-                ["required"] = new JsonArray("name"),
+                ["properties"] = new JsonObject
+                {
+                    ["name"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray(All().Select(r => (JsonNode)r.Name).ToArray()) },
+                    ["where"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("chat", "paste") },
+                },
+                ["required"] = new JsonArray("name", "where"),
             },
         };
     }
 
+    /// "paste" puts it on the clipboard for another app; anything else means show it in Otto's own chat.
+    public static bool ForChat(JsonNode input) => input["where"]?.GetValue<string>() != "paste";
+
+    /// The picture's file, or null when there's no reaction by that name (or the addon has gone).
+    public static string? PathOf(string name) =>
+        All().FirstOrDefault(x => x.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase)) is Reaction r ? Path.Combine(Addons.Dir(Id), r.File) : null;
+
+    static string Unknown(string name) => $"No reaction called '{name}'. Pick one of: {string.Join(", ", All().Select(x => x.Name))}";
+
     public static string Copy(string name)
     {
-        var r = All().FirstOrDefault(x => x.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
-                ?? throw new ArgumentException($"No reaction called '{name}'. Pick one of: {string.Join(", ", All().Select(x => x.Name))}");
-        var path = Path.Combine(Addons.Dir(Id), r.File);
+        var path = PathOf(name) ?? throw new ArgumentException(Unknown(name));
+        var r = All().First(x => x.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
         // the clipboard belongs to a UI (STA) thread; the agent runs on a worker
         Exception? failed = null;
         var t = new Thread(() =>

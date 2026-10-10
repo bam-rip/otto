@@ -23,6 +23,18 @@ static class RenderUi
         Hover(chat, new Point(60, 250)); // over Otto's wide reply
         Save(chat, "otto-ui-chat.png");
 
+        // a reaction picture as Otto's reply (only when the addon is installed: run with OTTO_DATA pointing at one)
+        if (Reactions.PathOf("laughing-cheers") is string pic)
+        {
+            chat.Clear();
+            chat.AddMessage("my code finally compiled after 3 hours, react to that", user: true);
+            chat.AddNote("Reacting with “laughing-cheers”", tool: true);
+            chat.AddPicture(pic);
+            chat.AddMessage("Three hours well spent. Enjoy it.", user: false);
+            Hover(chat, new Point(-1, -1));
+            Save(chat, "otto-ui-reaction.png");
+        }
+
         var now = DateTime.Now;
         history.Show(new List<ChatStore.Summary>
         {

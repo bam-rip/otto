@@ -91,6 +91,7 @@ static class CommandLine
                 log.AppendLine($"Otto (streamed in {++chunks} chunks): {t}");
             },
             OnTool = t => log.AppendLine("TOOL: " + t),
+            OnPicture = path => log.AppendLine("PICTURE: " + Path.GetFileName(path)),
             OnUsage = (usd, tokens, _) => { cost += usd ?? 0; tokensUsed += tokens; },
             OnControl = _ => { },
         };

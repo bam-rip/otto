@@ -488,6 +488,7 @@ sealed class ChatPanel : Form
         EmptyWorkingSet(System.Diagnostics.Process.GetCurrentProcess().Handle);
     }
     public void AddTool(string t) => Ui(() => chat.AddNote(t, tool: true));
+    public void AddPicture(string path) => Ui(() => chat.AddPicture(path));
     public void AddSystem(string t) => Ui(() => chat.AddNote(t, tool: false));
     public void RefreshSuggestions() => Ui(chat.RefreshSuggestions);
 

@@ -14,6 +14,8 @@ sealed class ChatView : Control
     }
     sealed class Msg : Item { public string Text = ""; public bool User, Reveal; }
     sealed class Note : Item { public string Text = ""; public bool Tool; }
+    /// A picture Otto sent (a reaction image), held in memory so the file isn't kept open.
+    sealed class Pic : Item { public Image Image = null!; }
     sealed class Ask : Item
     {
         public string Text = "";
@@ -149,6 +151,23 @@ sealed class ChatView : Control
     }
     public void AddNote(string text, bool tool) { items.Add(new Note { Text = text.Trim(), Tool = tool }); Changed(); }
 
+    public void AddPicture(string path)
+    {
+        Image img;
+        try
+        {
+            using var ms = new MemoryStream(File.ReadAllBytes(path));
+            using var loaded = Image.FromStream(ms);
+            img = new Bitmap(loaded); // a copy that doesn't need the stream (or the file) kept open
+        }
+        catch (Exception e) when (e is IOException or ArgumentException or UnauthorizedAccessException) { AddNote("(couldn't show the picture)", tool: false); return; }
+        items.Add(new Pic { Image = img });
+        Changed();
+    }
+
+    /// Pictures hold memory until they're let go.
+    static void Release(IEnumerable<Item> gone) { foreach (var p in gone.OfType<Pic>()) p.Image.Dispose(); }
+
     public void AddAsk(string text, TaskCompletionSource<bool> tcs)
     {
         var ask = new Ask { Text = text.Trim(), Tcs = tcs };
@@ -169,6 +188,7 @@ sealed class ChatView : Control
         int i = items.FindLastIndex(it => it is Msg { User: true });
         if (i < 0) return null;
         var text = ((Msg)items[i]).Text;
+        Release(items.Skip(i));
         items.RemoveRange(i, items.Count - i);
         streaming = null;
         Changed();
@@ -178,6 +198,7 @@ sealed class ChatView : Control
     public void Clear()
     {
         CancelAsks();
+        Release(items);
         items.Clear();
         suggestions = Pick();
         scroll = scrollTarget = 0;
@@ -191,6 +212,7 @@ sealed class ChatView : Control
     const int PadX = 12, PadY = 9;
     /// Room kept under every message for its hover buttons, so showing them never moves anything.
     const int ActionRow = 26;
+    const int PicSize = 170; // reaction pictures: big enough to read the joke, small enough for the narrow panel
 
     void LayoutItems(Graphics g)
     {
@@ -218,6 +240,9 @@ sealed class ChatView : Control
                     n.Box = new Rectangle(G, y, Inner, (int)Math.Ceiling(size.Height));
                     break;
                 }
+                case Pic p:
+                    p.Box = new Rectangle(G, y, D(PicSize), D(PicSize));
+                    break;
                 case Ask a:
                 {
                     var size = g.MeasureString(a.Text, body, Inner - 2 * D(14), wrap);
@@ -229,7 +254,7 @@ sealed class ChatView : Control
                     break;
                 }
             }
-            y = it.Box.Bottom + (it is Msg ? D(ActionRow) : 0);
+            y = it.Box.Bottom + (it is Msg or Pic ? D(ActionRow) : 0);
             prev = it;
         }
         if (showTyping)
@@ -296,6 +321,7 @@ sealed class ChatView : Control
             {
                 case Msg m: DrawMsg(g, m, alpha); break;
                 case Note n: DrawNote(g, n, alpha); break;
+                case Pic p: DrawPic(g, p, alpha); break;
                 case Ask a: DrawAsk(g, a, alpha); break;
             }
             g.Restore(s);
@@ -328,6 +354,16 @@ sealed class ChatView : Control
         var r = new RectangleF(m.Box.X + D(PadX), m.Box.Y + D(PadY), m.Box.Width - 2 * D(PadX) + 2, m.Box.Height - 2 * D(PadY) + 2);
         using var fg = new SolidBrush(Color.FromArgb(alpha, m.User ? Color.White : ChatPanel.Fg)); // white on the blue bubble in either theme
         g.DrawString(text, body, fg, r, wrap);
+    }
+
+    void DrawPic(Graphics g, Pic p, int alpha)
+    {
+        using var fade = new System.Drawing.Imaging.ImageAttributes();
+        fade.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = alpha / 255f });
+        var old = g.InterpolationMode;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.DrawImage(p.Image, p.Box, 0, 0, p.Image.Width, p.Image.Height, GraphicsUnit.Pixel, fade);
+        g.InterpolationMode = old;
     }
 
     void DrawNote(Graphics g, Note n, int alpha)
@@ -525,6 +561,13 @@ sealed class ChatView : Control
             {
                 if (a.Allow.Contains(p)) { a.Tcs.TrySetResult(true); return; }
                 if (a.Deny.Contains(p)) { a.Tcs.TrySetResult(false); return; }
+            }
+            if (it is Pic pic && e.Button == MouseButtons.Right && pic.Box.Contains(p))
+            {
+                var menu = new ContextMenuStrip();
+                menu.Items.Add("Copy picture", null, (_, _) => Clipboard.SetImage(pic.Image));
+                menu.Show(this, e.Location);
+                return;
             }
             if (it is Msg m && e.Button == MouseButtons.Right && m.Box.Contains(p))
             {

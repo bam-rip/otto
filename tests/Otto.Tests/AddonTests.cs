@@ -51,7 +51,7 @@ public class AddonTests : IDisposable
         Assert.Equal("facepalm", r.Name);
         var tool = Reactions.ToolDefinition().ToJsonString();
         Assert.Contains("facepalm: a facepalm. Use when something is dumb.", tool);
-        Assert.Contains("never in your own replies", tool);
+        Assert.Contains("never by habit or on every message", tool);
     }
 
     [Fact]

@@ -120,7 +120,7 @@ static class Tools
         "schedule_list" => "Checking what's scheduled",
         "schedule_cancel" => "Cancelling a scheduled item",
         "escalate" => "Thinking harder (switching to the bigger model)",
-        "reaction_image" => $"Copying the “{S(input, "name")}” reaction picture",
+        "reaction_image" => Reactions.ForChat(input) ? $"Reacting with “{S(input, "name")}”" : $"Copying the “{S(input, "name")}” reaction picture",
         _ => name,
     };
 

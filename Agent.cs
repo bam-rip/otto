@@ -32,6 +32,8 @@ sealed class Agent
     public Func<bool> Animate { get; init; } = () => true;
     bool animating;
     public required Action<string> OnTool { get; init; }
+    /// A picture to show in the chat as Otto's reply (a reaction image); null where there's no chat to show it in.
+    public Action<string>? OnPicture { get; init; }
     /// Per API call: cost in USD when known (Claude), tokens used, and how many of those were cached
     /// (re-read from the provider's cache at a fraction of the price).
     public required Action<double?, long, long> OnUsage { get; init; }
@@ -370,6 +372,13 @@ sealed class Agent
                 output = smartBlocked ? "The stronger model is over its usage limit right now. Carry on with this one."
                     : smart || cfg.Smart == cfg.Fast ? "You're already on the strongest model configured. Carry on." : "Switched to the stronger model. Carry on.";
                 if (!smartBlocked) smart = true;
+            }
+            else if (name == "reaction_image" && Reactions.ForChat(input))
+            {
+                var pic = Reactions.Available ? Reactions.PathOf(Tools.S(input, "name")) : null;
+                if (pic == null) output = Reactions.Available ? "No reaction by that name; pick one from the list." : "The reaction images addon isn't installed (Settings → Addons).";
+                else if (OnPicture == null) output = "There's no chat window to show it in here.";
+                else { OnPicture(pic); output = "Shown in the chat. Don't describe it; at most add a few words."; }
             }
             else if (name == "run_routine")
             {
